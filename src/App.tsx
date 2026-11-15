@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Factory, ShieldCheck, Eye, EyeOff, Lock } from 'lucide-react';
+import { Factory, ShieldCheck, Eye, EyeOff, Lock, MailCheck, RefreshCw, LogOut } from 'lucide-react';
 import { ErpProvider, useErp } from './context/ErpContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
@@ -13,7 +13,18 @@ import { SettingsPage } from './pages/SettingsPage';
 import { NavSection } from './types/erp';
 
 function AppContent() {
-  const { user, authLoading, authError, signInWithGoogle, signInWithAdminCredentials } = useErp();
+  const {
+    user,
+    authLoading,
+    authError,
+    authNotice,
+    needsPasswordSetup,
+    signInWithAdminCredentials,
+    sendAdminPasswordSetupEmail,
+    resendVerificationEmail,
+    refreshAuthSession,
+    signOutUser,
+  } = useErp();
   const [activeSection, setActiveSection] = useState<NavSection>('dashboard');
   const [loginId, setLoginId] = useState('');
   const [password, setPassword] = useState('');
@@ -64,7 +75,7 @@ function AppContent() {
           <form onSubmit={handleAdminSubmit} className="mt-6 border-t border-slate-100 pt-5 space-y-4">
             <div>
               <label htmlFor="admin-login-id" className="block text-xs font-medium text-slate-700 mb-1">
-                Admin Login ID
+                Username ID
               </label>
               <input
                 id="admin-login-id"
@@ -73,7 +84,7 @@ function AppContent() {
                 autoComplete="username"
                 value={loginId}
                 onChange={(e) => setLoginId(e.target.value)}
-                placeholder="Enter login ID (e.g. admin)"
+                placeholder="admin"
                 className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none"
               />
             </div>
@@ -105,8 +116,23 @@ function AppContent() {
             </div>
 
             {authError && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-                {authError}
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 space-y-2">
+                <p>{authError}</p>
+                {needsPasswordSetup && (
+                  <button
+                    type="button"
+                    onClick={sendAdminPasswordSetupEmail}
+                    className="inline-flex items-center rounded bg-red-700 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-red-800"
+                  >
+                    Send Password Setup Email
+                  </button>
+                )}
+              </div>
+            )}
+
+            {authNotice && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                {authNotice}
               </div>
             )}
 
@@ -116,29 +142,80 @@ function AppContent() {
               className="flex w-full items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
             >
               <Lock className="h-4 w-4" />
-              <span>{submitting ? 'Verifying...' : 'Sign In as Admin'}</span>
+              <span>{submitting ? 'Signing In...' : 'Sign In'}</span>
             </button>
           </form>
-
-          <div className="my-5 flex items-center gap-3">
-            <div className="h-px flex-1 bg-slate-200" />
-            <span className="text-[11px] font-medium text-slate-400">OR</span>
-            <div className="h-px flex-1 bg-slate-200" />
-          </div>
-
-          <button
-            type="button"
-            onClick={signInWithGoogle}
-            className="flex w-full items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-          >
-            <span>Sign In with Google</span>
-          </button>
 
           <div className="mt-5 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
             <ShieldCheck className="h-4 w-4 shrink-0 text-indigo-600" />
             <span>
-              Admin credentials connect to your verified Firebase Firestore session for persistent storage.
+              Protected admin portal for Chandramukhi Implex factory operations.
             </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user.emailVerified) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-8 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-amber-50 text-amber-700">
+              <MailCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="font-display text-base font-bold text-slate-900">
+                Verify Admin Email Once
+              </h2>
+              <p className="text-xs text-slate-500">
+                Verification link sent to {user.email}
+              </p>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Open your inbox, click the Firebase verification link to confirm admin access, then click{' '}
+            <span className="font-semibold text-slate-800">Refresh &amp; Continue</span>.
+          </p>
+
+          {authError && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              {authError}
+            </div>
+          )}
+
+          {authNotice && (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              {authNotice}
+            </div>
+          )}
+
+          <div className="flex flex-col gap-2 pt-2">
+            <button
+              type="button"
+              onClick={refreshAuthSession}
+              className="flex w-full items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              <RefreshCw className="h-4 w-4" />
+              <span>Refresh &amp; Continue</span>
+            </button>
+            <button
+              type="button"
+              onClick={resendVerificationEmail}
+              className="flex w-full items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <span>Resend Verification Email</span>
+            </button>
+            <button
+              type="button"
+              onClick={signOutUser}
+              className="flex w-full items-center justify-center gap-2 rounded-md px-4 py-2 text-xs font-medium text-slate-500 hover:text-slate-700"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Back to Login</span>
+            </button>
           </div>
         </div>
       </div>

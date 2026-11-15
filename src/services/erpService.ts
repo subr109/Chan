@@ -1087,7 +1087,7 @@ export async function saveCompanySettings(settings: Omit<CompanySettings, 'id' |
   try {
     const loginId = clampString(settings.adminLoginId || 'admin', 60);
     const pwdHash = clampString(
-      settings.adminPasswordHash || (await sha256Hex('admin@123')),
+      settings.adminPasswordHash || (await sha256Hex('Admin@123')),
       128
     );
     await setDoc(doc(db, 'settings', 'company_profile'), {

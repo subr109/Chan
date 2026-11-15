@@ -1,9 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {
   User,
+  createUserWithEmailAndPassword,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
-  signInWithPopup,
   signOut,
 } from 'firebase/auth';
 import {
@@ -20,7 +22,6 @@ import {
   BOOTSTRAPPED_ADMIN_EMAIL,
   auth,
   db,
-  googleProvider,
   handleFirestoreError,
 } from '../lib/firebase';
 import { getTodayISO, sha256Hex } from '../lib/formatters';
@@ -37,6 +38,8 @@ import {
   WorkCompletion,
 } from '../types/erp';
 
+const ADMIN_CREDS_STORAGE_KEY = 'cm_admin_creds_v2';
+
 interface ToastState {
   id: number;
   type: 'success' | 'error' | 'info';
@@ -47,10 +50,14 @@ interface ErpContextValue {
   user: User | null;
   authLoading: boolean;
   authError: string | null;
+  authNotice: string | null;
+  needsPasswordSetup: boolean;
   isAdmin: boolean;
   dataLoading: boolean;
-  signInWithGoogle: () => Promise<void>;
   signInWithAdminCredentials: (loginId: string, password: string) => Promise<void>;
+  sendAdminPasswordSetupEmail: () => Promise<void>;
+  resendVerificationEmail: () => Promise<void>;
+  refreshAuthSession: () => Promise<void>;
   signOutUser: () => Promise<void>;
   products: Product[];
   stockTransactions: StockTransaction[];
@@ -84,7 +91,12 @@ const ErpContext = createContext<ErpContextValue | null>(null);
 
 function toEpochMs(ts: unknown): number {
   if (!ts) return 0;
-  if (typeof ts === 'object' && ts !== null && 'toMillis' in ts && typeof (ts as { toMillis: () => number }).toMillis === 'function') {
+  if (
+    typeof ts === 'object' &&
+    ts !== null &&
+    'toMillis' in ts &&
+    typeof (ts as { toMillis: () => number }).toMillis === 'function'
+  ) {
     return (ts as { toMillis: () => number }).toMillis();
   }
   if (typeof ts === 'string' || typeof ts === 'number') {
@@ -96,8 +108,11 @@ function toEpochMs(ts: unknown): number {
 
 export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [emailVerified, setEmailVerified] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
   const [hasAdminDoc, setHasAdminDoc] = useState(false);
 
   const [dataLoading, setDataLoading] = useState(true);
@@ -125,7 +140,9 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   }, [toast]);
 
   const isBootstrappedAdmin = Boolean(
-    user && user.emailVerified && user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
+    user &&
+      emailVerified &&
+      user.email?.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase()
   );
 
   const isAdmin = isBootstrappedAdmin || hasAdminDoc;
@@ -134,9 +151,10 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      setEmailVerified(Boolean(currentUser?.emailVerified));
       setAuthError(null);
 
-      if (!currentUser) {
+      if (!currentUser || !currentUser.emailVerified) {
         setHasAdminDoc(false);
         setProducts([]);
         setStockTransactions([]);
@@ -150,6 +168,9 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         setAuthLoading(false);
         return;
       }
+
+      setNeedsPasswordSetup(false);
+      setAuthNotice(null);
 
       try {
         const adminSnap = await getDoc(doc(db, 'admins', currentUser.uid));
@@ -167,7 +188,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
           await setDoc(userRef, {
             uid: currentUser.uid,
             email: (currentUser.email || '').slice(0, 160),
-            displayName: (currentUser.displayName || currentUser.email || 'Factory User').slice(0, 100),
+            displayName: (currentUser.displayName || 'Administrator').slice(0, 100),
             role: isUserAdmin ? 'admin' : 'staff',
             isActive: true,
             createdBy: currentUser.uid,
@@ -185,9 +206,9 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     return () => unsub();
   }, []);
 
-  // Firestore real-time subscriptions (only when authenticated)
+  // Firestore real-time subscriptions (only when authenticated and emailVerified)
   useEffect(() => {
-    if (authLoading || !user) return;
+    if (authLoading || !user || !emailVerified) return;
     setDataLoading(true);
 
     const adminQueryMode = Boolean(
@@ -296,20 +317,23 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     unsubs.push(
       onSnapshot(
         buildRef('settings', 'updatedBy'),
-        (snap) => {
+        async (snap) => {
           const profileDoc = snap.docs.find((d) => d.id === 'company_profile') || snap.docs[0];
           if (profileDoc) {
             const loaded = { id: profileDoc.id, ...(profileDoc.data() as Omit<CompanySettings, 'id'>) };
             setSettings(loaded);
             if (loaded.adminLoginId && loaded.adminPasswordHash) {
               try {
-                localStorage.setItem(
-                  'cm_admin_creds',
-                  JSON.stringify({
-                    loginId: loaded.adminLoginId,
-                    passwordHash: loaded.adminPasswordHash,
-                  })
-                );
+                const legacyHash = await sha256Hex('admin@123');
+                if (loaded.adminPasswordHash !== legacyHash) {
+                  localStorage.setItem(
+                    ADMIN_CREDS_STORAGE_KEY,
+                    JSON.stringify({
+                      loginId: loaded.adminLoginId,
+                      passwordHash: loaded.adminPasswordHash,
+                    })
+                  );
+                }
               } catch {
                 // ignore storage errors
               }
@@ -348,7 +372,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     return () => {
       unsubs.forEach((fn) => fn());
     };
-  }, [authLoading, user]);
+  }, [authLoading, user, emailVerified]);
 
   // Dynamically compute Overdue status for tasks whose expected completion date passed while pendingQty > 0
   const tasks = useMemo(() => {
@@ -361,42 +385,24 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     });
   }, [rawTasks]);
 
-  const signInWithGoogle = useCallback(async () => {
-    setAuthError(null);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Sign-in failed. Please try again.';
-      setAuthError(msg);
-    }
-  }, []);
-
   const signInWithAdminCredentials = useCallback(async (loginId: string, password: string) => {
     setAuthError(null);
+    setAuthNotice(null);
+    setNeedsPasswordSetup(false);
+
     const trimmedId = loginId.trim();
     if (!trimmedId || !password) {
-      setAuthError('Please enter both Admin Login ID and Password.');
+      setAuthError('Please enter both Username ID and Password.');
       return;
-    }
-
-    // If user entered a full email address, attempt Firebase Email/Password auth directly
-    if (trimmedId.includes('@')) {
-      try {
-        await signInWithEmailAndPassword(auth, trimmedId, password);
-        return;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Email/Password sign-in failed.';
-        setAuthError(msg);
-        return;
-      }
     }
 
     try {
       let expectedId = 'admin';
-      let expectedHash = await sha256Hex('admin@123');
+      let expectedHash = await sha256Hex('Admin@123');
 
       try {
-        const cached = localStorage.getItem('cm_admin_creds');
+        localStorage.removeItem('cm_admin_creds');
+        const cached = localStorage.getItem(ADMIN_CREDS_STORAGE_KEY);
         if (cached) {
           const parsed = JSON.parse(cached) as { loginId?: string; passwordHash?: string };
           if (parsed.loginId && parsed.passwordHash) {
@@ -409,13 +415,59 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       }
 
       const providedHash = await sha256Hex(password);
-      if (trimmedId.toLowerCase() !== expectedId.toLowerCase() || providedHash !== expectedHash) {
-        setAuthError('Invalid Admin Login ID or Password.');
+      if (trimmedId !== expectedId || providedHash !== expectedHash) {
+        setAuthError('Invalid Username ID or Password.');
         return;
       }
 
-      if (!auth.currentUser) {
-        await signInWithPopup(auth, googleProvider);
+      try {
+        await signInWithEmailAndPassword(auth, BOOTSTRAPPED_ADMIN_EMAIL, password);
+      } catch (signInErr) {
+        const code = (signInErr as { code?: string })?.code || '';
+
+        if (code === 'auth/operation-not-allowed') {
+          setAuthError(
+            'Email/Password sign-in is disabled in Firebase Console. Enable Email/Password under Authentication → Sign-in method for project pivotal-rampart-7cbh2, then sign in again.'
+          );
+          return;
+        }
+
+        if (
+          code === 'auth/user-not-found' ||
+          code === 'auth/invalid-credential' ||
+          code === 'auth/wrong-password'
+        ) {
+          try {
+            const cred = await createUserWithEmailAndPassword(
+              auth,
+              BOOTSTRAPPED_ADMIN_EMAIL,
+              password
+            );
+            await sendEmailVerification(cred.user).catch(() => {});
+            setAuthNotice(
+              `Admin account initialized. A verification email was sent to ${BOOTSTRAPPED_ADMIN_EMAIL}.`
+            );
+            return;
+          } catch (createErr) {
+            const createCode = (createErr as { code?: string })?.code || '';
+            if (createCode === 'auth/email-already-in-use') {
+              setNeedsPasswordSetup(true);
+              setAuthError(
+                `Credentials verified, but ${BOOTSTRAPPED_ADMIN_EMAIL} in Firebase Auth does not have this password set yet. Click "Send Password Setup Email" below to set Admin@123.`
+              );
+              return;
+            }
+            if (createCode === 'auth/operation-not-allowed') {
+              setAuthError(
+                'Email/Password sign-in is disabled in Firebase Console. Enable Email/Password under Authentication → Sign-in method for project pivotal-rampart-7cbh2, then sign in again.'
+              );
+              return;
+            }
+            throw createErr;
+          }
+        }
+
+        throw signInErr;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Admin authentication failed.';
@@ -423,7 +475,56 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const sendAdminPasswordSetupEmail = useCallback(async () => {
+    setAuthError(null);
+    setAuthNotice(null);
+    try {
+      await sendPasswordResetEmail(auth, BOOTSTRAPPED_ADMIN_EMAIL);
+      setNeedsPasswordSetup(false);
+      setAuthNotice(
+        `Password setup email sent to ${BOOTSTRAPPED_ADMIN_EMAIL}. Open the link, set your password to Admin@123, then sign in here.`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to send password setup email.';
+      setAuthError(msg);
+    }
+  }, []);
+
+  const resendVerificationEmail = useCallback(async () => {
+    setAuthError(null);
+    setAuthNotice(null);
+    if (!auth.currentUser) return;
+    try {
+      await sendEmailVerification(auth.currentUser);
+      setAuthNotice(`Verification email sent to ${auth.currentUser.email}.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to send verification email.';
+      setAuthError(msg);
+    }
+  }, []);
+
+  const refreshAuthSession = useCallback(async () => {
+    setAuthError(null);
+    if (!auth.currentUser) return;
+    try {
+      await auth.currentUser.reload();
+      await auth.currentUser.getIdToken(true);
+      const refreshed = auth.currentUser;
+      setUser(refreshed);
+      setEmailVerified(Boolean(refreshed?.emailVerified));
+      if (refreshed && !refreshed.emailVerified) {
+        setAuthError('Email is still not verified yet. Please click the verification link in your inbox first.');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not refresh session.';
+      setAuthError(msg);
+    }
+  }, []);
+
   const signOutUser = useCallback(async () => {
+    setNeedsPasswordSetup(false);
+    setAuthError(null);
+    setAuthNotice(null);
     await signOut(auth);
   }, []);
 
@@ -431,10 +532,14 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     user,
     authLoading,
     authError,
+    authNotice,
+    needsPasswordSetup,
     isAdmin,
     dataLoading,
-    signInWithGoogle,
     signInWithAdminCredentials,
+    sendAdminPasswordSetupEmail,
+    resendVerificationEmail,
+    refreshAuthSession,
     signOutUser,
     products,
     stockTransactions,

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Shield, Save } from 'lucide-react';
+import { updatePassword } from 'firebase/auth';
 import { useErp } from '../context/ErpContext';
+import { auth } from '../lib/firebase';
 import {
   grantAdminAccess,
   revokeAdminAccess,
@@ -48,9 +50,18 @@ export function SettingsPage() {
     }
     setSaving(true);
     try {
-      const passwordHash = newAdminPassword.trim()
-        ? await sha256Hex(newAdminPassword)
-        : settings.adminPasswordHash || (await sha256Hex('admin@123'));
+      const trimmedNewPwd = newAdminPassword.trim();
+      const passwordHash = trimmedNewPwd
+        ? await sha256Hex(trimmedNewPwd)
+        : settings.adminPasswordHash || (await sha256Hex('Admin@123'));
+
+      if (trimmedNewPwd && auth.currentUser) {
+        try {
+          await updatePassword(auth.currentUser, trimmedNewPwd);
+        } catch {
+          // If Firebase requires recent login or account uses another provider, continue saving settings
+        }
+      }
 
       await saveCompanySettings({
         companyName,
