@@ -93,6 +93,37 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidSubProduct(data) {
+      return data.keys().hasAll([
+          'parentProductId', 'parentProductCode', 'parentProductName', 'subProductCode',
+          'name', 'unit', 'rate', 'labourRate', 'description',
+          'totalIssued', 'totalCompleted', 'totalEarned',
+          'isActive', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'parentProductId', 'parentProductCode', 'parentProductName', 'subProductCode',
+          'name', 'unit', 'rate', 'labourRate', 'description',
+          'totalIssued', 'totalCompleted', 'totalEarned',
+          'isActive', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.parentProductId)
+        && data.parentProductCode is string && data.parentProductCode.size() >= 1 && data.parentProductCode.size() <= 40
+        && data.parentProductName is string && data.parentProductName.size() >= 1 && data.parentProductName.size() <= 120
+        && isValidCode(data.subProductCode) && data.subProductCode.size() <= 40
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.unit is string && data.unit in ['Pieces', 'Meters', 'Rolls', 'Sets', 'Dozens'] && data.unit.size() <= 20
+        && isNonNegNum(data.rate)
+        && isNonNegNum(data.labourRate)
+        && data.description is string && data.description.size() <= 300
+        && isNonNegNum(data.totalIssued)
+        && isNonNegNum(data.totalCompleted)
+        && isNonNegNum(data.totalEarned)
+        && data.isActive is bool
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidStockTransaction(data) {
       return data.keys().hasAll([
           'transactionCode', 'productId', 'productName', 'productCode', 'type',
@@ -180,12 +211,16 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'issueCode', 'employeeId', 'employeeCode', 'employeeName', 'productId',
-          'productCode', 'productName', 'unit', 'quantityIssued', 'perUnitRate',
+          'productCode', 'productName', 'subProductId', 'subProductCode', 'subProductName',
+          'unit', 'quantityIssued', 'perUnitRate',
           'totalExpectedPayment', 'issueDate', 'expectedCompletionDate', 'notes',
           'completedAcceptedQty', 'completedRejectedQty', 'approvedRejectedQty',
           'returnedUnusedQty', 'pendingQty', 'earnedAmount', 'status', 'paymentStatus',
           'lastCompletionDate', 'createdBy', 'createdAt', 'updatedAt'
         ])
+        && (!('subProductId' in data.keys()) || (data.subProductId is string && data.subProductId.size() <= 128))
+        && (!('subProductCode' in data.keys()) || (data.subProductCode is string && data.subProductCode.size() <= 40))
+        && (!('subProductName' in data.keys()) || (data.subProductName is string && data.subProductName.size() <= 120))
         && isValidCode(data.issueCode) && data.issueCode.size() >= 3
         && isValidId(data.employeeId)
         && data.employeeCode is string && data.employeeCode.size() >= 1 && data.employeeCode.size() <= 40
@@ -224,11 +259,15 @@ service cloud.firestore {
         ])
         && data.keys().hasOnly([
           'completionCode', 'taskId', 'issueCode', 'employeeId', 'employeeName',
-          'productId', 'productName', 'previouslyPendingQty', 'newlyCompletedQty',
+          'productId', 'productName', 'subProductId', 'subProductCode', 'subProductName',
+          'previouslyPendingQty', 'newlyCompletedQty',
           'acceptedQty', 'rejectedQty', 'rejectedApprovedForPay', 'rejectedApprovalBy',
           'unusedReturnedQty', 'remainingWorkQty', 'perUnitRate', 'earnedAmount',
           'completionDate', 'remarks', 'createdBy', 'createdAt'
         ])
+        && (!('subProductId' in data.keys()) || (data.subProductId is string && data.subProductId.size() <= 128))
+        && (!('subProductCode' in data.keys()) || (data.subProductCode is string && data.subProductCode.size() <= 40))
+        && (!('subProductName' in data.keys()) || (data.subProductName is string && data.subProductName.size() <= 120))
         && isValidCode(data.completionCode) && data.completionCode.size() >= 3
         && isValidId(data.taskId)
         && data.issueCode is string && data.issueCode.size() >= 1 && data.issueCode.size() <= 60
@@ -367,6 +406,33 @@ service cloud.firestore {
           ]))
         );
       allow delete: if isValidId(productId) && isAdmin();
+    }
+
+    match /subProducts/{subProductId} {
+      allow get: if isValidId(subProductId) && (isAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid);
+      allow create: if isValidId(subProductId)
+        && isVerifiedUser()
+        && isValidSubProduct(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/products/$(incoming().parentProductId));
+      allow update: if isValidId(subProductId)
+        && isVerifiedUser()
+        && isValidSubProduct(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().parentProductId == existing().parentProductId
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (existing().createdBy == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'subProductCode', 'name', 'unit', 'rate', 'labourRate', 'description',
+            'totalIssued', 'totalCompleted', 'totalEarned', 'isActive', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(subProductId) && isAdmin();
     }
 
     match /stockTransactions/{txId} {

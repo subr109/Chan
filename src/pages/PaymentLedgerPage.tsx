@@ -11,7 +11,7 @@ const PAYMENT_METHODS: PaymentMethod[] = ['Cash', 'Bank Transfer', 'UPI', 'Chequ
 const LEDGER_TYPES: LedgerPaymentType[] = ['Regular Payment', 'Advance Payment', 'Settlement'];
 
 export function PaymentLedgerPage() {
-  const { employees, payments, settings, isAdmin, showToast, dataLoading } = useErp();
+  const { employees, payments, workCompletions, settings, isAdmin, showToast, dataLoading } = useErp();
 
   const [search, setSearch] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('ALL');
@@ -105,6 +105,30 @@ export function PaymentLedgerPage() {
     () => employees.find((e) => e.id === selectedEmpId) || null,
     [employees, selectedEmpId]
   );
+
+  const selectedEmpSubBreakdown = useMemo(() => {
+    if (!selectedEmployee) return [];
+    const map = new Map<
+      string,
+      { productName: string; subProductName: string; rate: number; acceptedQty: number; earnedAmount: number }
+    >();
+    workCompletions
+      .filter((wc) => wc.employeeId === selectedEmployee.id)
+      .forEach((wc) => {
+        const key = `${wc.productId}__${wc.subProductId || 'MAIN'}__${wc.perUnitRate}`;
+        const cur = map.get(key) || {
+          productName: wc.productName,
+          subProductName: wc.subProductName || 'Main Product',
+          rate: wc.perUnitRate,
+          acceptedQty: 0,
+          earnedAmount: 0,
+        };
+        cur.acceptedQty += wc.acceptedQty;
+        cur.earnedAmount += wc.earnedAmount;
+        map.set(key, cur);
+      });
+    return Array.from(map.values());
+  }, [selectedEmployee, workCompletions]);
 
   const handleRecordPayment = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -522,7 +546,7 @@ export function PaymentLedgerPage() {
       {/* Record Payment Modal */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true">
-          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6">
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-base font-semibold text-slate-900">Record Employee Payment</h3>
               <button
@@ -541,7 +565,12 @@ export function PaymentLedgerPage() {
                 <select
                   required
                   value={selectedEmpId}
-                  onChange={(e) => setSelectedEmpId(e.target.value)}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setSelectedEmpId(nextId);
+                    const emp = employees.find((item) => item.id === nextId);
+                    setAmount(emp && emp.outstandingBalance > 0 ? String(emp.outstandingBalance) : '');
+                  }}
                   className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
                 >
                   {employees.map((e) => (
@@ -553,21 +582,47 @@ export function PaymentLedgerPage() {
               </div>
 
               {selectedEmployee && (
-                <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs space-y-1 tabular-nums">
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Approved Earnings:</span>
-                    <span className="font-mono font-medium">{formatCurrency(selectedEmployee.totalApprovedEarnings)}</span>
+                <div className="space-y-3">
+                  <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-xs space-y-1 tabular-nums">
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Approved Earnings:</span>
+                      <span className="font-mono font-medium">{formatCurrency(selectedEmployee.totalApprovedEarnings)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-600">Already Paid:</span>
+                      <span className="font-mono font-medium">{formatCurrency(selectedEmployee.totalPaid)}</span>
+                    </div>
+                    <div className="flex justify-between border-t border-slate-200 pt-1">
+                      <span className="font-semibold text-slate-800">Current Payable Balance:</span>
+                      <span className="font-mono font-semibold text-amber-700">
+                        {formatCurrency(selectedEmployee.outstandingBalance)}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-600">Already Paid:</span>
-                    <span className="font-mono font-medium">{formatCurrency(selectedEmployee.totalPaid)}</span>
-                  </div>
-                  <div className="flex justify-between border-t border-slate-200 pt-1">
-                    <span className="font-semibold text-slate-800">Current Payable Balance:</span>
-                    <span className="font-mono font-semibold text-amber-700">
-                      {formatCurrency(selectedEmployee.outstandingBalance)}
-                    </span>
-                  </div>
+
+                  {selectedEmpSubBreakdown.length > 0 && (
+                    <div className="rounded-md border border-slate-200 bg-white overflow-hidden">
+                      <div className="border-b border-slate-100 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold text-slate-700">
+                        Sub-Product Work &amp; Rate Breakdown
+                      </div>
+                      <div className="max-h-36 overflow-y-auto divide-y divide-slate-100 text-xs">
+                        {selectedEmpSubBreakdown.map((item, idx) => (
+                          <div key={idx} className="flex items-center justify-between px-3 py-1.5 gap-2">
+                            <div className="min-w-0">
+                              <p className="font-medium text-slate-800 truncate">{item.subProductName}</p>
+                              <p className="text-[11px] text-slate-500 truncate">{item.productName}</p>
+                            </div>
+                            <div className="text-right font-mono tabular-nums shrink-0">
+                              <p className="font-semibold text-slate-900">{formatCurrency(item.earnedAmount)}</p>
+                              <p className="text-[10px] text-slate-500">
+                                {formatNumber(item.acceptedQty)} × {formatCurrency(item.rate)}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

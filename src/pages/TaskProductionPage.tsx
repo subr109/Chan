@@ -14,7 +14,7 @@ import { ConfirmModal } from '../components/ConfirmModal';
 type TaskFilterTab = 'ALL' | 'Pending' | 'In Progress' | 'Completed' | 'Overdue' | 'COMPLETIONS';
 
 export function TaskProductionPage() {
-  const { tasks, workCompletions, employees, products, isAdmin, showToast, dataLoading } = useErp();
+  const { tasks, workCompletions, employees, products, subProducts, isAdmin, showToast, dataLoading } = useErp();
 
   const [activeTab, setActiveTab] = useState<TaskFilterTab>('ALL');
   const [search, setSearch] = useState('');
@@ -32,6 +32,7 @@ export function TaskProductionPage() {
   // Issue Stock / Task Creation state
   const [selectedEmpId, setSelectedEmpId] = useState('');
   const [selectedProdId, setSelectedProdId] = useState('');
+  const [selectedSubProdId, setSelectedSubProdId] = useState('');
   const [quantityIssued, setQuantityIssued] = useState('');
   const [perUnitRate, setPerUnitRate] = useState('');
   const [issueDate, setIssueDate] = useState(getTodayISO());
@@ -55,6 +56,16 @@ export function TaskProductionPage() {
     [products, selectedProdId]
   );
 
+  const activeSubProductsForProduct = useMemo(
+    () => subProducts.filter((sp) => sp.parentProductId === selectedProdId && sp.isActive),
+    [subProducts, selectedProdId]
+  );
+
+  const selectedSubProduct = useMemo(
+    () => subProducts.find((sp) => sp.id === selectedSubProdId) || null,
+    [subProducts, selectedSubProdId]
+  );
+
   const selectedEmployee = useMemo(
     () => employees.find((e) => e.id === selectedEmpId) || null,
     [employees, selectedEmpId]
@@ -71,7 +82,9 @@ export function TaskProductionPage() {
         t.employeeName.toLowerCase().includes(q) ||
         t.employeeCode.toLowerCase().includes(q) ||
         t.productName.toLowerCase().includes(q) ||
-        t.productCode.toLowerCase().includes(q)
+        t.productCode.toLowerCase().includes(q) ||
+        (t.subProductName || '').toLowerCase().includes(q) ||
+        (t.subProductCode || '').toLowerCase().includes(q)
       );
     });
   }, [tasks, activeTab, employeeFilter, search]);
@@ -85,7 +98,8 @@ export function TaskProductionPage() {
         wc.completionCode.toLowerCase().includes(q) ||
         wc.issueCode.toLowerCase().includes(q) ||
         wc.employeeName.toLowerCase().includes(q) ||
-        wc.productName.toLowerCase().includes(q)
+        wc.productName.toLowerCase().includes(q) ||
+        (wc.subProductName || '').toLowerCase().includes(q)
       );
     });
   }, [workCompletions, employeeFilter, search]);
@@ -102,16 +116,22 @@ export function TaskProductionPage() {
   const openIssueModal = () => {
     const firstEmp = activeEmployees[0];
     const firstProd = products.find((p) => p.warehouseStock > 0) || products[0];
+    const firstProdSubs = firstProd
+      ? subProducts.filter((sp) => sp.parentProductId === firstProd.id && sp.isActive)
+      : [];
+    const firstSub = firstProdSubs[0] || null;
+
     setSelectedEmpId(firstEmp?.id || '');
     setSelectedProdId(firstProd?.id || '');
+    setSelectedSubProdId(firstSub?.id || '');
     setQuantityIssued('');
-    setPerUnitRate(
-      String(
-        firstEmp?.perPieceRate && firstEmp.perPieceRate > 0
-          ? firstEmp.perPieceRate
-          : firstProd?.defaultLabourRate ?? 0
-      )
-    );
+    if (firstSub) {
+      setPerUnitRate(String(firstSub.labourRate));
+    } else if (firstProd && firstProd.defaultLabourRate > 0) {
+      setPerUnitRate(String(firstProd.defaultLabourRate));
+    } else {
+      setPerUnitRate(String(firstEmp?.perPieceRate ?? 0));
+    }
     const today = getTodayISO();
     setIssueDate(today);
     setExpectedDate(addDaysISO(today, 7));
@@ -122,7 +142,12 @@ export function TaskProductionPage() {
   const handleEmpChange = (empId: string) => {
     setSelectedEmpId(empId);
     const emp = employees.find((e) => e.id === empId);
-    if (emp && emp.perPieceRate > 0) {
+    if (
+      !selectedSubProduct &&
+      (!selectedProduct || selectedProduct.defaultLabourRate <= 0) &&
+      emp &&
+      emp.perPieceRate > 0
+    ) {
       setPerUnitRate(String(emp.perPieceRate));
     }
   };
@@ -130,8 +155,32 @@ export function TaskProductionPage() {
   const handleProdChange = (prodId: string) => {
     setSelectedProdId(prodId);
     const prod = products.find((p) => p.id === prodId);
-    if (prod && (!selectedEmployee || selectedEmployee.perPieceRate <= 0)) {
+    const subs = subProducts.filter((sp) => sp.parentProductId === prodId && sp.isActive);
+    const firstSub = subs[0] || null;
+    setSelectedSubProdId(firstSub?.id || '');
+
+    if (firstSub) {
+      setPerUnitRate(String(firstSub.labourRate));
+    } else if (prod && prod.defaultLabourRate > 0) {
       setPerUnitRate(String(prod.defaultLabourRate));
+    } else if (selectedEmployee && selectedEmployee.perPieceRate > 0) {
+      setPerUnitRate(String(selectedEmployee.perPieceRate));
+    } else {
+      setPerUnitRate(String(prod?.defaultLabourRate ?? 0));
+    }
+  };
+
+  const handleSubProdChange = (subId: string) => {
+    setSelectedSubProdId(subId);
+    const sub = subProducts.find((sp) => sp.id === subId);
+    if (sub) {
+      setPerUnitRate(String(sub.labourRate));
+    } else if (selectedProduct && selectedProduct.defaultLabourRate > 0) {
+      setPerUnitRate(String(selectedProduct.defaultLabourRate));
+    } else if (selectedEmployee && selectedEmployee.perPieceRate > 0) {
+      setPerUnitRate(String(selectedEmployee.perPieceRate));
+    } else {
+      setPerUnitRate('0');
     }
   };
 
@@ -142,6 +191,7 @@ export function TaskProductionPage() {
       await issueStockTask({
         employeeId: selectedEmpId,
         productId: selectedProdId,
+        subProductId: selectedSubProdId || undefined,
         quantityIssued: Number(quantityIssued),
         perUnitRate: Number(perUnitRate),
         issueDate,
@@ -380,7 +430,12 @@ export function TaskProductionPage() {
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-medium text-slate-900">{wc.employeeName}</p>
-                        <p className="text-xs text-slate-500">{wc.productName}</p>
+                        <p className="text-xs text-slate-600">{wc.productName}</p>
+                        {wc.subProductName && (
+                          <p className="text-xs font-medium text-indigo-700">
+                            ↳ {wc.subProductName} ({wc.subProductCode})
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right font-mono tabular-nums text-emerald-700 font-medium">
                         {formatNumber(wc.acceptedQty)}
@@ -468,6 +523,11 @@ export function TaskProductionPage() {
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-medium text-slate-900">{t.productName}</p>
+                      {t.subProductName && (
+                        <p className="text-xs font-medium text-indigo-700">
+                          ↳ {t.subProductName} ({t.subProductCode})
+                        </p>
+                      )}
                       <p className="font-mono text-xs text-slate-500">{t.productCode}</p>
                     </td>
                     <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-900">
@@ -588,7 +648,7 @@ export function TaskProductionPage() {
 
                 <div>
                   <label className="block text-xs font-medium text-slate-700 mb-1">
-                    Select Product / Material *
+                    Select Main Product / Material *
                   </label>
                   <select
                     required
@@ -596,7 +656,7 @@ export function TaskProductionPage() {
                     onChange={(e) => handleProdChange(e.target.value)}
                     className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
                   >
-                    <option value="">Select Product...</option>
+                    <option value="">Select Main Product...</option>
                     {products.map((prod) => (
                       <option key={prod.id} value={prod.id}>
                         {prod.name} ({prod.productCode}) — Avail: {formatNumber(prod.warehouseStock)} {prod.unit}
@@ -612,6 +672,34 @@ export function TaskProductionPage() {
                     </p>
                   )}
                 </div>
+
+                {selectedProduct && (
+                  <div>
+                    <label className="block text-xs font-medium text-indigo-800 mb-1">
+                      Select Sub-Product (Separate Rate)
+                    </label>
+                    {activeSubProductsForProduct.length > 0 ? (
+                      <select
+                        value={selectedSubProdId}
+                        onChange={(e) => handleSubProdChange(e.target.value)}
+                        className="w-full rounded-md border border-indigo-200 bg-indigo-50/40 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none"
+                      >
+                        {activeSubProductsForProduct.map((sp) => (
+                          <option key={sp.id} value={sp.id}>
+                            {sp.name} ({sp.subProductCode}) — Labour Rate: {formatCurrency(sp.labourRate)}/{sp.unit}
+                          </option>
+                        ))}
+                        <option value="">
+                          Main Product Only — Default Rate: {formatCurrency(selectedProduct.defaultLabourRate)}/{selectedProduct.unit}
+                        </option>
+                      </select>
+                    ) : (
+                      <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                        No sub-products defined under {selectedProduct.name}. Add sub-products in Stock Management to assign separate rates per sub-product.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
@@ -642,6 +730,11 @@ export function TaskProductionPage() {
                       onChange={(e) => setPerUnitRate(e.target.value)}
                       className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"
                     />
+                    {selectedSubProduct && (
+                      <p className="mt-1 text-[11px] text-indigo-700 tabular-nums">
+                        Sub-product rate: {formatCurrency(selectedSubProduct.labourRate)}/{selectedSubProduct.unit}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-700 mb-1">
@@ -740,6 +833,7 @@ export function TaskProductionPage() {
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   {completionTarget.employeeName} · {completionTarget.productName}
+                  {completionTarget.subProductName ? ` → ${completionTarget.subProductName} (${completionTarget.subProductCode})` : ''}
                 </p>
               </div>
               <button
@@ -905,7 +999,8 @@ export function TaskProductionPage() {
                   Task Ledger — {detailTarget.issueCode}
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  {detailTarget.employeeName} ({detailTarget.employeeCode}) · {detailTarget.productName} · Issued {detailTarget.quantityIssued} {detailTarget.unit} on {detailTarget.issueDate}
+                  {detailTarget.employeeName} ({detailTarget.employeeCode}) · {detailTarget.productName}
+                  {detailTarget.subProductName ? ` → ${detailTarget.subProductName}` : ''} · Issued {detailTarget.quantityIssued} {detailTarget.unit} on {detailTarget.issueDate}
                 </p>
               </div>
               <button

@@ -26,6 +26,7 @@ import {
   PaymentType,
   Product,
   ProductUnit,
+  SubProduct,
   Task,
   WorkCompletion,
 } from '../types/erp';
@@ -313,10 +314,13 @@ export async function recordStockAdjustment(input: StockAdjustmentInput): Promis
   }
 }
 
-export async function deleteProduct(product: Product): Promise<void> {
+export async function deleteProduct(product: Product, linkedSubProductsCount = 0): Promise<void> {
   const user = requireUser();
   if (product.employeeHeldStock > 0) {
     throw new Error('Cannot delete a product that currently has stock held by employees.');
+  }
+  if (linkedSubProductsCount > 0) {
+    throw new Error('Delete all sub-products under this main product before deleting the main product.');
   }
   try {
     const batch = writeBatch(db);
@@ -334,6 +338,116 @@ export async function deleteProduct(product: Product): Promise<void> {
   } catch (err) {
     if (isPermissionError(err)) {
       handleFirestoreError(err, OperationType.DELETE, `products/${product.id}`);
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------
+// SUB-PRODUCTS (UNDER MAIN PRODUCTS)
+// ---------------------------------------------------------
+
+export interface CreateSubProductInput {
+  parentProductId: string;
+  subProductCode: string;
+  name: string;
+  unit: ProductUnit;
+  rate: number;
+  labourRate: number;
+  description: string;
+}
+
+export async function createSubProduct(input: CreateSubProductInput): Promise<string> {
+  const user = requireUser();
+  if (!input.parentProductId) {
+    throw new Error('Please select a Main Product.');
+  }
+  const subProductId = generateDocId('sub');
+  const code = sanitizeCode(input.subProductCode, 'SUB');
+  const name = clampString(input.name, 120);
+  if (!name) throw new Error('Sub-product name is required.');
+
+  try {
+    await runTransaction(db, async (tx) => {
+      const parentRef = doc(db, 'products', input.parentProductId);
+      const parentSnap = await tx.get(parentRef);
+      if (!parentSnap.exists()) {
+        throw new Error('Selected main product no longer exists.');
+      }
+      const parent = parentSnap.data() as Product;
+
+      tx.set(doc(db, 'subProducts', subProductId), {
+        parentProductId: input.parentProductId,
+        parentProductCode: clampString(parent.productCode, 40),
+        parentProductName: clampString(parent.name, 120),
+        subProductCode: code,
+        name,
+        unit: input.unit,
+        rate: Math.max(0, toSafeNumber(input.rate)),
+        labourRate: Math.max(0, toSafeNumber(input.labourRate)),
+        description: clampString(input.description, 300),
+        totalIssued: 0,
+        totalCompleted: 0,
+        totalEarned: 0,
+        isActive: true,
+        createdBy: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    });
+    return subProductId;
+  } catch (err) {
+    if (isPermissionError(err)) {
+      handleFirestoreError(err, OperationType.CREATE, `subProducts/${subProductId}`);
+    }
+    throw err;
+  }
+}
+
+export async function updateSubProduct(
+  subProduct: SubProduct,
+  updates: Partial<Pick<SubProduct, 'subProductCode' | 'name' | 'unit' | 'rate' | 'labourRate' | 'description' | 'isActive'>>
+): Promise<void> {
+  requireUser();
+  const nextName = clampString(updates.name ?? subProduct.name, 120);
+  if (!nextName) throw new Error('Sub-product name is required.');
+  try {
+    await updateDoc(doc(db, 'subProducts', subProduct.id), {
+      subProductCode: sanitizeCode(updates.subProductCode ?? subProduct.subProductCode, 'SUB'),
+      name: nextName,
+      unit: updates.unit ?? subProduct.unit,
+      rate: Math.max(0, toSafeNumber(updates.rate ?? subProduct.rate)),
+      labourRate: Math.max(0, toSafeNumber(updates.labourRate ?? subProduct.labourRate)),
+      description: clampString(updates.description ?? subProduct.description, 300),
+      isActive: updates.isActive ?? subProduct.isActive,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    if (isPermissionError(err)) {
+      handleFirestoreError(err, OperationType.UPDATE, `subProducts/${subProduct.id}`);
+    }
+    throw err;
+  }
+}
+
+export async function deleteSubProduct(subProduct: SubProduct): Promise<void> {
+  const user = requireUser();
+  try {
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'subProducts', subProduct.id));
+    batch.set(doc(db, 'auditLogs', generateDocId('log')), {
+      action: 'DELETE_SUB_PRODUCT',
+      entityType: 'SubProduct',
+      entityId: subProduct.id,
+      summary: `Deleted sub-product ${subProduct.name} (${subProduct.subProductCode}) under ${subProduct.parentProductName}`,
+      performedBy: user.uid,
+      performedByEmail: clampString(user.email || '', 160),
+      createdAt: serverTimestamp(),
+    });
+    await batch.commit();
+  } catch (err) {
+    if (isPermissionError(err)) {
+      handleFirestoreError(err, OperationType.DELETE, `subProducts/${subProduct.id}`);
     }
     throw err;
   }
@@ -470,6 +584,7 @@ export async function deleteEmployee(employee: Employee): Promise<void> {
 export interface IssueTaskInput {
   employeeId: string;
   productId: string;
+  subProductId?: string;
   quantityIssued: number;
   perUnitRate: number;
   issueDate: string;
@@ -484,7 +599,7 @@ export async function issueStockTask(input: IssueTaskInput): Promise<string> {
 
   if (qty <= 0) throw new Error('Issued quantity must be greater than zero.');
   if (!input.employeeId || !input.productId) {
-    throw new Error('Both Employee and Product must be selected.');
+    throw new Error('Both Employee and Main Product must be selected.');
   }
 
   const taskId = generateDocId('task');
@@ -494,13 +609,26 @@ export async function issueStockTask(input: IssueTaskInput): Promise<string> {
     await runTransaction(db, async (tx) => {
       const prodRef = doc(db, 'products', input.productId);
       const empRef = doc(db, 'employees', input.employeeId);
+      const subProdRef = input.subProductId ? doc(db, 'subProducts', input.subProductId) : null;
 
-      const [prodSnap, empSnap] = await Promise.all([tx.get(prodRef), tx.get(empRef)]);
-      if (!prodSnap.exists()) throw new Error('Selected product does not exist.');
+      const [prodSnap, empSnap, subProdSnap] = await Promise.all([
+        tx.get(prodRef),
+        tx.get(empRef),
+        subProdRef ? tx.get(subProdRef) : Promise.resolve(null),
+      ]);
+      if (!prodSnap.exists()) throw new Error('Selected main product does not exist.');
       if (!empSnap.exists()) throw new Error('Selected employee does not exist.');
+      if (subProdRef && (!subProdSnap || !subProdSnap.exists())) {
+        throw new Error('Selected sub-product does not exist.');
+      }
 
       const prod = prodSnap.data() as Product;
       const emp = empSnap.data() as Employee;
+      const subProd = subProdSnap?.exists() ? (subProdSnap.data() as SubProduct) : null;
+
+      if (subProd && subProd.parentProductId !== input.productId) {
+        throw new Error('Selected sub-product does not belong to the chosen main product.');
+      }
 
       if (emp.status !== 'Active') {
         throw new Error(`Cannot issue stock to inactive employee ${emp.name}.`);
@@ -530,6 +658,13 @@ export async function issueStockTask(input: IssueTaskInput): Promise<string> {
         updatedAt: serverTimestamp(),
       });
 
+      if (subProdRef && subProd) {
+        tx.update(subProdRef, {
+          totalIssued: toSafeNumber(toSafeNumber(subProd.totalIssued) + qty),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
       const taskRef = doc(db, 'tasks', taskId);
       tx.set(taskRef, {
         issueCode,
@@ -539,7 +674,10 @@ export async function issueStockTask(input: IssueTaskInput): Promise<string> {
         productId: input.productId,
         productCode: clampString(prod.productCode, 40),
         productName: clampString(prod.name, 120),
-        unit: clampString(prod.unit, 20),
+        subProductId: subProd ? clampString(input.subProductId || '', 128) : '',
+        subProductCode: subProd ? clampString(subProd.subProductCode, 40) : '',
+        subProductName: subProd ? clampString(subProd.name, 120) : '',
+        unit: clampString(subProd ? subProd.unit : prod.unit, 20),
         quantityIssued: qty,
         perUnitRate: rate,
         totalExpectedPayment: toSafeNumber(qty * rate),
@@ -560,6 +698,7 @@ export async function issueStockTask(input: IssueTaskInput): Promise<string> {
         updatedAt: serverTimestamp(),
       });
 
+      const subLabel = subProd ? ` [${subProd.name}]` : '';
       const txRef = doc(db, 'stockTransactions', generateDocId('tx'));
       tx.set(txRef, {
         transactionCode: generateSequentialCode('TXN'),
@@ -577,7 +716,7 @@ export async function issueStockTask(input: IssueTaskInput): Promise<string> {
         employeeId: input.employeeId,
         employeeName: clampString(emp.name, 100),
         referenceId: issueCode,
-        remarks: clampString(input.notes || `Issued to ${emp.name} (${issueCode})`, 500),
+        remarks: clampString(input.notes || `Issued${subLabel} to ${emp.name} (${issueCode})`, 500),
         isAuthorizedAdjustment: false,
         performedBy: user.uid,
         performedByEmail: clampString(user.email || '', 160),
@@ -630,13 +769,19 @@ export async function recordWorkCompletion(input: WorkCompletionInput): Promise<
       const task = taskSnap.data() as Task;
       const prodRef = doc(db, 'products', task.productId);
       const empRef = doc(db, 'employees', task.employeeId);
+      const subProdRef = task.subProductId ? doc(db, 'subProducts', task.subProductId) : null;
 
-      const [prodSnap, empSnap] = await Promise.all([tx.get(prodRef), tx.get(empRef)]);
+      const [prodSnap, empSnap, subProdSnap] = await Promise.all([
+        tx.get(prodRef),
+        tx.get(empRef),
+        subProdRef ? tx.get(subProdRef) : Promise.resolve(null),
+      ]);
       if (!prodSnap.exists()) throw new Error('Associated product record not found.');
       if (!empSnap.exists()) throw new Error('Associated employee record not found.');
 
       const prod = prodSnap.data() as Product;
       const emp = empSnap.data() as Employee;
+      const subProd = subProdSnap?.exists() ? (subProdSnap.data() as SubProduct) : null;
 
       const prevPending = toSafeNumber(task.pendingQty);
       if (totalProcessed > prevPending) {
@@ -700,6 +845,14 @@ export async function recordWorkCompletion(input: WorkCompletionInput): Promise<
         updatedAt: serverTimestamp(),
       });
 
+      if (subProdRef && subProd) {
+        tx.update(subProdRef, {
+          totalCompleted: toSafeNumber(toSafeNumber(subProd.totalCompleted) + accepted),
+          totalEarned: toSafeNumber(toSafeNumber(subProd.totalEarned) + earnedThisEntry),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
       // Create WorkCompletion installment record
       tx.set(doc(db, 'workCompletions', completionId), {
         completionCode,
@@ -709,6 +862,9 @@ export async function recordWorkCompletion(input: WorkCompletionInput): Promise<
         employeeName: clampString(task.employeeName, 100),
         productId: task.productId,
         productName: clampString(task.productName, 120),
+        subProductId: clampString(task.subProductId || '', 128),
+        subProductCode: clampString(task.subProductCode || '', 40),
+        subProductName: clampString(task.subProductName || '', 120),
         previouslyPendingQty: prevPending,
         newlyCompletedQty: newlyCompleted,
         acceptedQty: accepted,
@@ -827,11 +983,15 @@ export async function approveRejectedPayment(completion: WorkCompletion, isAdmin
       const cmpRef = doc(db, 'workCompletions', completion.id);
       const taskRef = doc(db, 'tasks', completion.taskId);
       const empRef = doc(db, 'employees', completion.employeeId);
+      const subProdRef = completion.subProductId
+        ? doc(db, 'subProducts', completion.subProductId)
+        : null;
 
-      const [cmpSnap, taskSnap, empSnap] = await Promise.all([
+      const [cmpSnap, taskSnap, empSnap, subProdSnap] = await Promise.all([
         tx.get(cmpRef),
         tx.get(taskRef),
         tx.get(empRef),
+        subProdRef ? tx.get(subProdRef) : Promise.resolve(null),
       ]);
 
       if (!cmpSnap.exists() || !taskSnap.exists() || !empSnap.exists()) {
@@ -840,6 +1000,7 @@ export async function approveRejectedPayment(completion: WorkCompletion, isAdmin
 
       const taskData = taskSnap.data() as Task;
       const empData = empSnap.data() as Employee;
+      const subProd = subProdSnap?.exists() ? (subProdSnap.data() as SubProduct) : null;
 
       tx.update(cmpRef, {
         rejectedApprovedForPay: true,
@@ -860,6 +1021,13 @@ export async function approveRejectedPayment(completion: WorkCompletion, isAdmin
         outstandingBalance: toSafeNumber(nextEarnings - toSafeNumber(empData.totalPaid)),
         updatedAt: serverTimestamp(),
       });
+
+      if (subProdRef && subProd) {
+        tx.update(subProdRef, {
+          totalEarned: toSafeNumber(toSafeNumber(subProd.totalEarned) + bonus),
+          updatedAt: serverTimestamp(),
+        });
+      }
 
       tx.set(doc(db, 'auditLogs', generateDocId('log')), {
         action: 'APPROVE_REJECTED_PAY',
@@ -890,8 +1058,13 @@ export async function deleteTask(task: Task): Promise<void> {
       const taskRef = doc(db, 'tasks', task.id);
       const prodRef = doc(db, 'products', task.productId);
       const empRef = doc(db, 'employees', task.employeeId);
+      const subProdRef = task.subProductId ? doc(db, 'subProducts', task.subProductId) : null;
 
-      const [prodSnap, empSnap] = await Promise.all([tx.get(prodRef), tx.get(empRef)]);
+      const [prodSnap, empSnap, subProdSnap] = await Promise.all([
+        tx.get(prodRef),
+        tx.get(empRef),
+        subProdRef ? tx.get(subProdRef) : Promise.resolve(null),
+      ]);
       if (prodSnap.exists()) {
         const prod = prodSnap.data() as Product;
         const prevW = toSafeNumber(prod.warehouseStock);
@@ -932,6 +1105,14 @@ export async function deleteTask(task: Task): Promise<void> {
         tx.update(empRef, {
           totalStockReceived: Math.max(0, toSafeNumber(toSafeNumber(emp.totalStockReceived) - task.quantityIssued)),
           currentMaterialBalance: Math.max(0, toSafeNumber(toSafeNumber(emp.currentMaterialBalance) - task.quantityIssued)),
+          updatedAt: serverTimestamp(),
+        });
+      }
+
+      if (subProdRef && subProdSnap?.exists()) {
+        const subProd = subProdSnap.data() as SubProduct;
+        tx.update(subProdRef, {
+          totalIssued: Math.max(0, toSafeNumber(toSafeNumber(subProd.totalIssued) - task.quantityIssued)),
           updatedAt: serverTimestamp(),
         });
       }

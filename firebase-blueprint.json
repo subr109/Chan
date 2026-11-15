@@ -2,7 +2,7 @@
   "entities": {
     "Product": {
       "title": "Product",
-      "description": "Garment product or raw material item tracked in warehouse, employee-held, finished goods, and damaged stock.",
+      "description": "Main garment product or raw material item tracked in warehouse, employee-held, finished goods, and damaged stock.",
       "type": "object",
       "properties": {
         "productCode": { "type": "string", "minLength": 2, "maxLength": 40, "pattern": "^[A-Za-z0-9_\\-]+$" },
@@ -31,6 +31,34 @@
         "openingStock", "stockReceived", "stockIssued", "stockReturned",
         "damagedStock", "otherDeductions", "warehouseStock", "employeeHeldStock",
         "finishedGoodsStock", "minStockLevel", "isActive", "createdBy", "createdAt", "updatedAt"
+      ]
+    },
+    "SubProduct": {
+      "title": "SubProduct",
+      "description": "Sub-product variant or operation under a main product, each with its own labour rate for employee tasks and wages.",
+      "type": "object",
+      "properties": {
+        "parentProductId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "parentProductCode": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "parentProductName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "subProductCode": { "type": "string", "minLength": 2, "maxLength": 40, "pattern": "^[A-Za-z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "unit": { "type": "string", "enum": ["Pieces", "Meters", "Rolls", "Sets", "Dozens"], "maxLength": 20 },
+        "rate": { "type": "number" },
+        "labourRate": { "type": "number" },
+        "description": { "type": "string", "maxLength": 300 },
+        "totalIssued": { "type": "number" },
+        "totalCompleted": { "type": "number" },
+        "totalEarned": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "parentProductId", "parentProductCode", "parentProductName", "subProductCode",
+        "name", "unit", "rate", "labourRate", "description", "totalIssued",
+        "totalCompleted", "totalEarned", "isActive", "createdBy", "createdAt", "updatedAt"
       ]
     },
     "StockTransaction": {
@@ -106,7 +134,7 @@
     },
     "Task": {
       "title": "Task",
-      "description": "Stock issue and manufacturing task assigned to an employee.",
+      "description": "Stock issue and manufacturing task assigned to an employee for a main product or sub-product.",
       "type": "object",
       "properties": {
         "issueCode": { "type": "string", "minLength": 3, "maxLength": 60, "pattern": "^[A-Za-z0-9_\\-]+$" },
@@ -116,6 +144,9 @@
         "productId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "productCode": { "type": "string", "minLength": 1, "maxLength": 40 },
         "productName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "subProductId": { "type": "string", "maxLength": 128 },
+        "subProductCode": { "type": "string", "maxLength": 40 },
+        "subProductName": { "type": "string", "maxLength": 120 },
         "unit": { "type": "string", "minLength": 1, "maxLength": 20 },
         "quantityIssued": { "type": "number" },
         "perUnitRate": { "type": "number" },
@@ -157,6 +188,9 @@
         "employeeName": { "type": "string", "minLength": 1, "maxLength": 100 },
         "productId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
         "productName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "subProductId": { "type": "string", "maxLength": 128 },
+        "subProductCode": { "type": "string", "maxLength": 40 },
+        "subProductName": { "type": "string", "maxLength": 120 },
         "previouslyPendingQty": { "type": "number" },
         "newlyCompletedQty": { "type": "number" },
         "acceptedQty": { "type": "number" },
@@ -278,7 +312,11 @@
   "firestore": {
     "/products/{productId}": {
       "schema": { "$ref": "#/entities/Product" },
-      "description": "Garment products and raw material inventory items."
+      "description": "Main garment products and raw material inventory items."
+    },
+    "/subProducts/{subProductId}": {
+      "schema": { "$ref": "#/entities/SubProduct" },
+      "description": "Sub-products belonging to main products, each with its own labour rate."
     },
     "/stockTransactions/{txId}": {
       "schema": { "$ref": "#/entities/StockTransaction" },

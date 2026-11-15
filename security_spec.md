@@ -6,6 +6,7 @@
 3. **Strict Schema Enforcement**: Every `create` and `update` must pass `isValid[Entity](incoming())`, enforcing exact allowed keys (`hasAll` + `hasOnly`), string length limits, numeric bounds (e.g. `warehouseStock >= 0`, `amount > 0`), and regex ID guards (`^[a-zA-Z0-9_\-]+$`).
 4. **Immutable Audit Trail**: `stockTransactions` and `auditLogs` are append-only (`allow update, delete: if false` for non-admin, and `stockTransactions` cannot be silently deleted even in UI; rules block `update` and `delete` on `stockTransactions` and `auditLogs`).
 5. **Relational Integrity**:
+   - Creating a `SubProduct` requires `existsAfter(/databases/$(database)/documents/products/$(incoming().parentProductId))`.
    - Creating a `Task` requires `exists(/databases/$(database)/documents/employees/$(incoming().employeeId))` and `exists(/databases/$(database)/documents/products/$(incoming().productId))`.
    - Creating a `WorkCompletion` requires `exists(/databases/$(database)/documents/tasks/$(incoming().taskId))`.
    - Creating a `Payment` requires `exists(/databases/$(database)/documents/employees/$(incoming().employeeId))`.

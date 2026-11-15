@@ -653,13 +653,23 @@ export function EmployeeManagementPage() {
                       profileTasks.map((t) => (
                         <tr key={t.id}>
                           <td className="px-3 py-2 font-mono text-slate-900">{t.issueCode}</td>
-                          <td className="px-3 py-2">{t.productName}</td>
+                          <td className="px-3 py-2">
+                            <p className="font-medium text-slate-900">{t.productName}</p>
+                            {t.subProductName && (
+                              <p className="text-[11px] font-medium text-indigo-700">
+                                ↳ {t.subProductName} ({t.subProductCode})
+                              </p>
+                            )}
+                          </td>
                           <td className="px-3 py-2 font-mono text-slate-500">
                             {t.issueDate} / {t.expectedCompletionDate}
                           </td>
                           <td className="px-3 py-2 text-right font-mono tabular-nums">{t.quantityIssued}</td>
                           <td className="px-3 py-2 text-right font-mono tabular-nums text-amber-700">{t.pendingQty}</td>
-                          <td className="px-3 py-2 text-right font-mono tabular-nums">{formatCurrency(t.earnedAmount)}</td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums">
+                            <p className="font-semibold text-slate-900">{formatCurrency(t.earnedAmount)}</p>
+                            <p className="text-[10px] text-slate-500">@ {formatCurrency(t.perUnitRate)}/u</p>
+                          </td>
                           <td className="px-3 py-2 font-medium">{t.status}</td>
                         </tr>
                       ))
@@ -693,11 +703,21 @@ export function EmployeeManagementPage() {
                         <tr key={wc.id}>
                           <td className="px-3 py-2 font-mono text-slate-900">{wc.completionCode}</td>
                           <td className="px-3 py-2 font-mono text-slate-500">{wc.completionDate}</td>
-                          <td className="px-3 py-2">{wc.productName}</td>
+                          <td className="px-3 py-2">
+                            <p className="font-medium text-slate-900">{wc.productName}</p>
+                            {wc.subProductName && (
+                              <p className="text-[11px] font-medium text-indigo-700">
+                                ↳ {wc.subProductName} ({wc.subProductCode})
+                              </p>
+                            )}
+                          </td>
                           <td className="px-3 py-2 text-right font-mono tabular-nums text-emerald-700">{wc.acceptedQty}</td>
                           <td className="px-3 py-2 text-right font-mono tabular-nums text-red-600">{wc.rejectedQty}</td>
                           <td className="px-3 py-2 text-right font-mono tabular-nums">{wc.unusedReturnedQty}</td>
-                          <td className="px-3 py-2 text-right font-mono tabular-nums font-semibold">{formatCurrency(wc.earnedAmount)}</td>
+                          <td className="px-3 py-2 text-right font-mono tabular-nums">
+                            <p className="font-semibold text-slate-900">{formatCurrency(wc.earnedAmount)}</p>
+                            <p className="text-[10px] text-slate-500">@ {formatCurrency(wc.perUnitRate)}/u</p>
+                          </td>
                         </tr>
                       ))
                     )}

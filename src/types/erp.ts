@@ -41,6 +41,26 @@ export interface Product {
   updatedAt: unknown;
 }
 
+export interface SubProduct {
+  id: string;
+  parentProductId: string;
+  parentProductCode: string;
+  parentProductName: string;
+  subProductCode: string;
+  name: string;
+  unit: ProductUnit;
+  rate: number;
+  labourRate: number;
+  description: string;
+  totalIssued: number;
+  totalCompleted: number;
+  totalEarned: number;
+  isActive: boolean;
+  createdBy: string;
+  createdAt: unknown;
+  updatedAt: unknown;
+}
+
 export interface StockTransaction {
   id: string;
   transactionCode: string;
@@ -99,6 +119,9 @@ export interface Task {
   productId: string;
   productCode: string;
   productName: string;
+  subProductId?: string;
+  subProductCode?: string;
+  subProductName?: string;
   unit: string;
   quantityIssued: number;
   perUnitRate: number;
@@ -129,6 +152,9 @@ export interface WorkCompletion {
   employeeName: string;
   productId: string;
   productName: string;
+  subProductId?: string;
+  subProductCode?: string;
+  subProductName?: string;
   previouslyPendingQty: number;
   newlyCompletedQty: number;
   acceptedQty: number;

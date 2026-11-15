@@ -43,6 +43,7 @@ function getTxDateISO(ts: unknown): string {
 export function ReportsPage() {
   const {
     products,
+    subProducts,
     employees,
     tasks,
     workCompletions,
@@ -181,6 +182,7 @@ export function ReportsPage() {
           wc.issueCode,
           wc.employeeName,
           wc.productName,
+          wc.subProductName || '—',
           wc.acceptedQty,
           wc.rejectedQty,
           wc.unusedReturnedQty,
@@ -192,11 +194,12 @@ export function ReportsPage() {
           companyName,
           dateRangeLabel,
           filterLabel,
-          headers: ['Completion ID', 'Date', 'Issue ID', 'Employee', 'Product', 'Accepted', 'Rejected', 'Unused Ret.', 'Earned'],
+          headers: ['Completion ID', 'Date', 'Issue ID', 'Employee', 'Product', 'Sub-Product', 'Accepted', 'Rejected', 'Unused Ret.', 'Earned'],
           rows,
           totalsRow: [
             'TOTAL',
             `${list.length} Entries`,
+            '',
             '',
             '',
             '',
@@ -221,6 +224,7 @@ export function ReportsPage() {
           t.expectedCompletionDate,
           t.employeeName,
           t.productName,
+          t.subProductName || '—',
           t.quantityIssued,
           t.completedAcceptedQty,
           t.completedRejectedQty,
@@ -235,11 +239,12 @@ export function ReportsPage() {
           companyName,
           dateRangeLabel,
           filterLabel,
-          headers: ['Issue ID', 'Issue Date', 'Due Date', 'Employee', 'Product', 'Issued', 'Accepted', 'Rejected', 'Returned', 'Pending', 'Earned', 'Status'],
+          headers: ['Issue ID', 'Issue Date', 'Due Date', 'Employee', 'Product', 'Sub-Product', 'Issued', 'Accepted', 'Rejected', 'Returned', 'Pending', 'Earned', 'Status'],
           rows,
           totalsRow: [
             'TOTAL',
             `${list.length} Tasks`,
+            '',
             '',
             '',
             '',
@@ -356,6 +361,7 @@ export function ReportsPage() {
           t.issueCode,
           t.employeeName,
           t.productName,
+          t.subProductName || '—',
           t.issueDate,
           t.expectedCompletionDate,
           t.quantityIssued,
@@ -370,11 +376,12 @@ export function ReportsPage() {
           companyName,
           dateRangeLabel,
           filterLabel,
-          headers: ['Issue ID', 'Employee', 'Product', 'Issue Date', 'Due Date', 'Issued', 'Completed', 'Returned', 'Pending Qty', 'Status'],
+          headers: ['Issue ID', 'Employee', 'Product', 'Sub-Product', 'Issue Date', 'Due Date', 'Issued', 'Completed', 'Returned', 'Pending Qty', 'Status'],
           rows,
           totalsRow: [
             'TOTAL',
             `${list.length} Open Tasks`,
+            '',
             '',
             '',
             '',
@@ -401,6 +408,7 @@ export function ReportsPage() {
           wc.issueCode,
           wc.employeeName,
           wc.productName,
+          wc.subProductName || '—',
           wc.rejectedQty,
           wc.rejectedApprovedForPay ? 'Approved' : 'Unpaid',
           wc.remarks || '—',
@@ -411,11 +419,12 @@ export function ReportsPage() {
           companyName,
           dateRangeLabel,
           filterLabel,
-          headers: ['Completion ID', 'Date', 'Issue ID', 'Employee', 'Product', 'Rejected Qty', 'Pay Status', 'Remarks'],
+          headers: ['Completion ID', 'Date', 'Issue ID', 'Employee', 'Product', 'Sub-Product', 'Rejected Qty', 'Pay Status', 'Remarks'],
           rows,
           totalsRow: [
             'TOTAL',
             `${list.length} Incidents`,
+            '',
             '',
             '',
             '',
@@ -433,17 +442,50 @@ export function ReportsPage() {
             (employeeFilter === 'ALL' || t.employeeId === employeeFilter) &&
             (productFilter === 'ALL' || t.productId === productFilter)
         );
-        const byProd = new Map<string, { code: string; name: string; issued: number; acc: number; rej: number; ret: number; pending: number; earned: number }>();
+        const byKey = new Map<
+          string,
+          { code: string; mainName: string; subName: string; issued: number; acc: number; rej: number; ret: number; pending: number; earned: number }
+        >();
+        subProducts
+          .filter((sp) => productFilter === 'ALL' || sp.parentProductId === productFilter)
+          .forEach((sp) => {
+            byKey.set(`${sp.parentProductId}__${sp.id}`, {
+              code: sp.subProductCode,
+              mainName: sp.parentProductName,
+              subName: sp.name,
+              issued: 0,
+              acc: 0,
+              rej: 0,
+              ret: 0,
+              pending: 0,
+              earned: 0,
+            });
+          });
         products
           .filter((p) => productFilter === 'ALL' || p.id === productFilter)
           .forEach((p) => {
-            byProd.set(p.id, { code: p.productCode, name: p.name, issued: 0, acc: 0, rej: 0, ret: 0, pending: 0, earned: 0 });
+            const hasSubs = subProducts.some((sp) => sp.parentProductId === p.id);
+            if (!hasSubs) {
+              byKey.set(`${p.id}__MAIN`, {
+                code: p.productCode,
+                mainName: p.name,
+                subName: '—',
+                issued: 0,
+                acc: 0,
+                rej: 0,
+                ret: 0,
+                pending: 0,
+                earned: 0,
+              });
+            }
           });
 
         filteredTasks.forEach((t) => {
-          const cur = byProd.get(t.productId) || {
-            code: t.productCode,
-            name: t.productName,
+          const mapKey = `${t.productId}__${t.subProductId || 'MAIN'}`;
+          const cur = byKey.get(mapKey) || {
+            code: t.subProductCode || t.productCode,
+            mainName: t.productName,
+            subName: t.subProductName || 'Main Product Only',
             issued: 0,
             acc: 0,
             rej: 0,
@@ -457,22 +499,23 @@ export function ReportsPage() {
           cur.ret += t.returnedUnusedQty;
           cur.pending += t.pendingQty;
           cur.earned += t.earnedAmount;
-          byProd.set(t.productId, cur);
+          byKey.set(mapKey, cur);
         });
 
-        const list = Array.from(byProd.values());
-        const rows = list.map((p) => [p.code, p.name, p.issued, p.acc, p.rej, p.ret, p.pending, formatCurrency(p.earned)]);
+        const list = Array.from(byKey.values());
+        const rows = list.map((p) => [p.code, p.mainName, p.subName, p.issued, p.acc, p.rej, p.ret, p.pending, formatCurrency(p.earned)]);
         return {
-          title: 'Product-wise Production Summary Report',
+          title: 'Product & Sub-Product Production Summary Report',
           fileSlug: 'product_wise_production_report',
           companyName,
           dateRangeLabel,
           filterLabel,
-          headers: ['Code', 'Product Name', 'Issued', 'Accepted', 'Rejected', 'Unused Ret.', 'Pending', 'Labour Cost'],
+          headers: ['Code', 'Main Product', 'Sub-Product', 'Issued', 'Accepted', 'Rejected', 'Unused Ret.', 'Pending', 'Labour Cost'],
           rows,
           totalsRow: [
             'TOTAL',
-            `${list.length} Products`,
+            `${list.length} Items`,
+            '',
             list.reduce((s, p) => s + p.issued, 0),
             list.reduce((s, p) => s + p.acc, 0),
             list.reduce((s, p) => s + p.rej, 0),
@@ -530,6 +573,7 @@ export function ReportsPage() {
   }, [
     reportType,
     products,
+    subProducts,
     employees,
     tasks,
     workCompletions,

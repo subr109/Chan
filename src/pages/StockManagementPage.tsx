@@ -1,26 +1,43 @@
 import React, { useMemo, useState } from 'react';
-import { Plus, Search, PackagePlus, SlidersHorizontal, History, Pencil, Trash2, X, AlertTriangle } from 'lucide-react';
+import {
+  Plus,
+  Search,
+  PackagePlus,
+  SlidersHorizontal,
+  History,
+  Pencil,
+  Trash2,
+  X,
+  AlertTriangle,
+  Layers,
+  ChevronDown,
+  ChevronRight,
+} from 'lucide-react';
 import { useErp } from '../context/ErpContext';
 import {
   createProduct,
+  createSubProduct,
   deleteProduct,
+  deleteSubProduct,
   receiveStock,
   recordStockAdjustment,
   updateProductDetails,
+  updateSubProduct,
 } from '../services/erpService';
 import { formatCurrency, formatNumber, formatTimestamp } from '../lib/formatters';
-import { Product, ProductUnit } from '../types/erp';
+import { Product, ProductUnit, SubProduct } from '../types/erp';
 import { ConfirmModal } from '../components/ConfirmModal';
 
 const UNITS: ProductUnit[] = ['Pieces', 'Meters', 'Rolls', 'Sets', 'Dozens'];
 const CATEGORIES = ['Shirts', 'Trousers', 'Kurtis', 'Denim', 'Raw Fabric', 'Accessories', 'General Garments'];
 
 export function StockManagementPage() {
-  const { products, stockTransactions, settings, isAdmin, showToast, dataLoading } = useErp();
+  const { products, subProducts, stockTransactions, settings, isAdmin, showToast, dataLoading } = useErp();
 
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('ALL');
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [expandedProducts, setExpandedProducts] = useState<Record<string, boolean>>({});
 
   // Modals
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -29,6 +46,19 @@ export function StockManagementPage() {
   const [adjustTarget, setAdjustTarget] = useState<Product | null>(null);
   const [historyTarget, setHistoryTarget] = useState<Product | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
+
+  // Sub-Product Modals & State
+  const [subModalOpen, setSubModalOpen] = useState(false);
+  const [editingSubProduct, setEditingSubProduct] = useState<SubProduct | null>(null);
+  const [subDeleteTarget, setSubDeleteTarget] = useState<SubProduct | null>(null);
+  const [subParentId, setSubParentId] = useState('');
+  const [subCode, setSubCode] = useState('');
+  const [subName, setSubName] = useState('');
+  const [subUnit, setSubUnit] = useState<ProductUnit>('Pieces');
+  const [subRate, setSubRate] = useState('0');
+  const [subLabourRate, setSubLabourRate] = useState('0');
+  const [subDescription, setSubDescription] = useState('');
+  const [subIsActive, setSubIsActive] = useState(true);
 
   const [busy, setBusy] = useState(false);
 
@@ -51,6 +81,16 @@ export function StockManagementPage() {
   const [adjustQty, setAdjustQty] = useState('');
   const [adjustRemarks, setAdjustRemarks] = useState('');
 
+  const subProductsByParent = useMemo(() => {
+    const map = new Map<string, SubProduct[]>();
+    subProducts.forEach((sp) => {
+      const arr = map.get(sp.parentProductId) || [];
+      arr.push(sp);
+      map.set(sp.parentProductId, arr);
+    });
+    return map;
+  }, [subProducts]);
+
   const categories = useMemo(() => {
     const set = new Set(CATEGORIES);
     products.forEach((p) => set.add(p.category));
@@ -63,13 +103,18 @@ export function StockManagementPage() {
       if (categoryFilter !== 'ALL' && p.category !== categoryFilter) return false;
       if (lowStockOnly && p.warehouseStock > p.minStockLevel) return false;
       if (!q) return true;
+      const subs = subProductsByParent.get(p.id) || [];
+      const subMatches = subs.some(
+        (sp) => sp.name.toLowerCase().includes(q) || sp.subProductCode.toLowerCase().includes(q)
+      );
       return (
+        subMatches ||
         p.name.toLowerCase().includes(q) ||
         p.productCode.toLowerCase().includes(q) ||
         p.category.toLowerCase().includes(q)
       );
     });
-  }, [products, search, categoryFilter, lowStockOnly]);
+  }, [products, subProductsByParent, search, categoryFilter, lowStockOnly]);
 
   const totals = useMemo(() => {
     return filteredProducts.reduce(
@@ -189,11 +234,106 @@ export function StockManagementPage() {
     }
   };
 
+  const openAddSubModal = (parent?: Product) => {
+    const targetParent = parent || products[0];
+    if (!targetParent) {
+      showToast('error', 'Create a Main Product first before adding sub-products.');
+      return;
+    }
+    const existingCount = (subProductsByParent.get(targetParent.id) || []).length;
+    setEditingSubProduct(null);
+    setSubParentId(targetParent.id);
+    setSubCode(`${targetParent.productCode}-S${existingCount + 1}`);
+    setSubName('');
+    setSubUnit(targetParent.unit);
+    setSubRate(String(targetParent.rate));
+    setSubLabourRate(String(targetParent.defaultLabourRate));
+    setSubDescription('');
+    setSubIsActive(true);
+    setSubModalOpen(true);
+  };
+
+  const openEditSubModal = (sp: SubProduct) => {
+    setEditingSubProduct(sp);
+    setSubParentId(sp.parentProductId);
+    setSubCode(sp.subProductCode);
+    setSubName(sp.name);
+    setSubUnit(sp.unit);
+    setSubRate(String(sp.rate));
+    setSubLabourRate(String(sp.labourRate));
+    setSubDescription(sp.description || '');
+    setSubIsActive(sp.isActive);
+    setSubModalOpen(true);
+  };
+
+  const handleSubParentChange = (parentId: string) => {
+    setSubParentId(parentId);
+    const parent = products.find((p) => p.id === parentId);
+    if (parent && !editingSubProduct) {
+      const existingCount = (subProductsByParent.get(parent.id) || []).length;
+      setSubCode(`${parent.productCode}-S${existingCount + 1}`);
+      setSubUnit(parent.unit);
+      setSubRate(String(parent.rate));
+      setSubLabourRate(String(parent.defaultLabourRate));
+    }
+  };
+
+  const handleSaveSubProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      if (editingSubProduct) {
+        await updateSubProduct(editingSubProduct, {
+          subProductCode: subCode,
+          name: subName,
+          unit: subUnit,
+          rate: Number(subRate),
+          labourRate: Number(subLabourRate),
+          description: subDescription,
+          isActive: subIsActive,
+        });
+        showToast('success', `Updated sub-product ${subName}.`);
+      } else {
+        await createSubProduct({
+          parentProductId: subParentId,
+          subProductCode: subCode,
+          name: subName,
+          unit: subUnit,
+          rate: Number(subRate),
+          labourRate: Number(subLabourRate),
+          description: subDescription,
+        });
+        setExpandedProducts((prev) => ({ ...prev, [subParentId]: true }));
+        showToast('success', `Added sub-product ${subName} under main product.`);
+      }
+      setSubModalOpen(false);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Failed to save sub-product.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteSubProduct = async () => {
+    if (!subDeleteTarget) return;
+    setBusy(true);
+    try {
+      await deleteSubProduct(subDeleteTarget);
+      showToast('success', `Deleted sub-product ${subDeleteTarget.name}.`);
+      setSubDeleteTarget(null);
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Failed to delete sub-product.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleDeleteProduct = async () => {
     if (!deleteTarget) return;
     setBusy(true);
     try {
-      await deleteProduct(deleteTarget);
+      const linkedCount = (subProductsByParent.get(deleteTarget.id) || []).length;
+      await deleteProduct(deleteTarget, linkedCount);
       showToast('success', `Deleted product ${deleteTarget.name}.`);
       setDeleteTarget(null);
     } catch (err) {
@@ -215,17 +355,28 @@ export function StockManagementPage() {
         <div>
           <h2 className="text-lg font-semibold text-slate-900">Warehouse &amp; Inventory Control</h2>
           <p className="text-xs text-slate-500 mt-0.5 tabular-nums">
-            Formula: Available = (Opening + Received) - Issued + Returned - Deductions
+            Formula: Available = (Opening + Received) - Issued + Returned - Deductions · Sub-products carry individual labour rates
           </p>
         </div>
-        <button
-          type="button"
-          onClick={openAddModal}
-          className="inline-flex items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors whitespace-nowrap shrink-0"
-        >
-          <Plus className="h-4 w-4" />
-          <span>Add Product</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => openAddSubModal()}
+            disabled={products.length === 0}
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3.5 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 transition-colors whitespace-nowrap"
+          >
+            <Layers className="h-4 w-4" />
+            <span>Add Sub-Product</span>
+          </button>
+          <button
+            type="button"
+            onClick={openAddModal}
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors whitespace-nowrap"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Add Main Product</span>
+          </button>
+        </div>
       </div>
 
       {/* Live Position Strip */}
@@ -338,109 +489,211 @@ export function StockManagementPage() {
                 {filteredProducts.map((p) => {
                   const isLow = p.warehouseStock <= p.minStockLevel;
                   const totalRecv = p.openingStock + p.stockReceived;
+                  const subs = subProductsByParent.get(p.id) || [];
+                  const isExpanded = subs.length > 0 && (expandedProducts[p.id] ?? true);
                   return (
-                    <tr key={p.id} className="hover:bg-slate-50/70">
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-slate-900">{p.name}</p>
-                        <p className="font-mono text-xs text-slate-500">
-                          {p.productCode} · {p.unit}
-                        </p>
-                      </td>
-                      <td className="px-4 py-3 text-slate-700">{p.category}</td>
-                      <td className="px-4 py-3 text-right font-mono text-xs tabular-nums">
-                        <p className="text-slate-900">{formatCurrency(p.rate)}</p>
-                        <p className="text-slate-500">Lab: {formatCurrency(p.defaultLabourRate)}</p>
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
-                        {formatNumber(totalRecv)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
-                        {formatNumber(p.stockIssued)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
-                        {formatNumber(p.stockReturned)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums">
-                        <span
-                          className={`font-semibold ${
-                            isLow ? 'text-amber-700' : 'text-slate-900'
-                          }`}
-                        >
-                          {formatNumber(p.warehouseStock)}
-                        </span>
-                        {isLow && (
-                          <p className="text-[11px] font-sans font-medium text-amber-700">
-                            Low Stock (Min {formatNumber(p.minStockLevel)})
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-indigo-700 font-medium">
-                        {formatNumber(p.employeeHeldStock)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-emerald-700 font-medium">
-                        {formatNumber(p.finishedGoodsStock)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono tabular-nums text-red-600">
-                        {formatNumber(p.damagedStock)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="inline-flex items-center justify-end gap-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setReceiveTarget(p);
-                              setReceiveQty('');
-                              setReceiveRemarks('');
-                            }}
-                            title="Receive Stock"
-                            className="rounded p-1.5 text-emerald-700 hover:bg-emerald-50"
+                    <React.Fragment key={p.id}>
+                      <tr className="hover:bg-slate-50/70">
+                        <td className="px-4 py-3">
+                          <div className="flex items-start gap-2">
+                            {subs.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedProducts((prev) => ({
+                                    ...prev,
+                                    [p.id]: !(prev[p.id] ?? true),
+                                  }))
+                                }
+                                title={isExpanded ? 'Hide Sub-Products' : 'Show Sub-Products'}
+                                className="mt-0.5 rounded p-0.5 text-slate-500 hover:bg-slate-200"
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown className="h-4 w-4" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4" />
+                                )}
+                              </button>
+                            ) : (
+                              <span className="w-5 shrink-0" />
+                            )}
+                            <div>
+                              <p className="font-medium text-slate-900">{p.name}</p>
+                              <p className="font-mono text-xs text-slate-500">
+                                {p.productCode} · {p.unit}
+                                {subs.length > 0 && (
+                                  <span className="ml-1.5 font-sans font-medium text-indigo-700">
+                                    · {subs.length} sub-product{subs.length > 1 ? 's' : ''}
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">{p.category}</td>
+                        <td className="px-4 py-3 text-right font-mono text-xs tabular-nums">
+                          <p className="text-slate-900">{formatCurrency(p.rate)}</p>
+                          <p className="text-slate-500">Lab: {formatCurrency(p.defaultLabourRate)}</p>
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
+                          {formatNumber(totalRecv)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
+                          {formatNumber(p.stockIssued)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
+                          {formatNumber(p.stockReturned)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono tabular-nums">
+                          <span
+                            className={`font-semibold ${
+                              isLow ? 'text-amber-700' : 'text-slate-900'
+                            }`}
                           >
-                            <PackagePlus className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setHistoryTarget(p)}
-                            title="Stock History"
-                            className="rounded p-1.5 text-slate-600 hover:bg-slate-100"
-                          >
-                            <History className="h-4 w-4" />
-                          </button>
-                          {isAdmin && (
+                            {formatNumber(p.warehouseStock)}
+                          </span>
+                          {isLow && (
+                            <p className="text-[11px] font-sans font-medium text-amber-700">
+                              Low Stock (Min {formatNumber(p.minStockLevel)})
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono tabular-nums text-indigo-700 font-medium">
+                          {formatNumber(p.employeeHeldStock)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono tabular-nums text-emerald-700 font-medium">
+                          {formatNumber(p.finishedGoodsStock)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-mono tabular-nums text-red-600">
+                          {formatNumber(p.damagedStock)}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="inline-flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openAddSubModal(p)}
+                              title="Add Sub-Product Under This Product"
+                              className="rounded px-2 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50 whitespace-nowrap"
+                            >
+                              + Sub
+                            </button>
                             <button
                               type="button"
                               onClick={() => {
-                                setAdjustTarget(p);
-                                setAdjustType('DAMAGE_DEDUCTION');
-                                setAdjustQty('');
-                                setAdjustRemarks('');
+                                setReceiveTarget(p);
+                                setReceiveQty('');
+                                setReceiveRemarks('');
                               }}
-                              title="Authorized Adjustment / Damage"
-                              className="rounded p-1.5 text-amber-700 hover:bg-amber-50"
+                              title="Receive Stock"
+                              className="rounded p-1.5 text-emerald-700 hover:bg-emerald-50"
                             >
-                              <SlidersHorizontal className="h-4 w-4" />
+                              <PackagePlus className="h-4 w-4" />
                             </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => openEditModal(p)}
-                            title="Edit Product"
-                            className="rounded p-1.5 text-slate-600 hover:bg-slate-100"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                          {isAdmin && (
                             <button
                               type="button"
-                              onClick={() => setDeleteTarget(p)}
-                              title="Delete Product"
-                              className="rounded p-1.5 text-red-600 hover:bg-red-50"
+                              onClick={() => setHistoryTarget(p)}
+                              title="Stock History"
+                              className="rounded p-1.5 text-slate-600 hover:bg-slate-100"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <History className="h-4 w-4" />
                             </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setAdjustTarget(p);
+                                  setAdjustType('DAMAGE_DEDUCTION');
+                                  setAdjustQty('');
+                                  setAdjustRemarks('');
+                                }}
+                                title="Authorized Adjustment / Damage"
+                                className="rounded p-1.5 text-amber-700 hover:bg-amber-50"
+                              >
+                                <SlidersHorizontal className="h-4 w-4" />
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => openEditModal(p)}
+                              title="Edit Product"
+                              className="rounded p-1.5 text-slate-600 hover:bg-slate-100"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                            {isAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => setDeleteTarget(p)}
+                                title="Delete Product"
+                                className="rounded p-1.5 text-red-600 hover:bg-red-50"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded &&
+                        subs.map((sp) => (
+                          <tr key={sp.id} className="bg-slate-50/80 hover:bg-indigo-50/30">
+                            <td className="py-2.5 pl-11 pr-4">
+                              <p className="text-xs font-medium text-slate-800">
+                                ↳ {sp.name}
+                                {!sp.isActive && (
+                                  <span className="ml-2 text-[11px] font-normal text-slate-400">(Inactive)</span>
+                                )}
+                              </p>
+                              <p className="font-mono text-[11px] text-slate-500">
+                                {sp.subProductCode} · {sp.unit}
+                                {sp.description ? ` · ${sp.description}` : ''}
+                              </p>
+                            </td>
+                            <td className="px-4 py-2.5 text-xs text-slate-500">Sub-Product</td>
+                            <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums">
+                              <p className="text-slate-600">{formatCurrency(sp.rate)}</p>
+                              <p className="font-semibold text-indigo-700">
+                                Lab: {formatCurrency(sp.labourRate)}/{sp.unit}
+                              </p>
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-xs text-slate-400">—</td>
+                            <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-700">
+                              {formatNumber(sp.totalIssued)}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-xs text-slate-400">—</td>
+                            <td className="px-4 py-2.5 text-right text-[11px] text-slate-400">Uses parent stock</td>
+                            <td className="px-4 py-2.5 text-right text-xs text-slate-400">—</td>
+                            <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-emerald-700">
+                              {formatNumber(sp.totalCompleted)} done
+                              <span className="block text-[10px] text-slate-500">
+                                {formatCurrency(sp.totalEarned)} earned
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-xs text-slate-400">—</td>
+                            <td className="px-4 py-2.5 text-right">
+                              <div className="inline-flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openEditSubModal(sp)}
+                                  title="Edit Sub-Product Rate & Details"
+                                  className="rounded p-1.5 text-slate-600 hover:bg-slate-200/70"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                {isAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSubDeleteTarget(sp)}
+                                    title="Delete Sub-Product"
+                                    className="rounded p-1.5 text-red-600 hover:bg-red-50"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -827,7 +1080,167 @@ export function StockManagementPage() {
         </div>
       )}
 
-      {/* Delete Confirmation */}
+      {/* Add / Edit Sub-Product Modal */}
+      {subModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-lg rounded-lg border border-slate-200 bg-white p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  {editingSubProduct ? 'Edit Sub-Product & Rate' : 'Add Sub-Product Under Main Product'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Each sub-product has its own employee piece-rate used during task assignment &amp; wage payout.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSubModalOpen(false)}
+                className="rounded p-1 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveSubProduct} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Main Product *
+                </label>
+                <select
+                  required
+                  disabled={Boolean(editingSubProduct)}
+                  value={subParentId}
+                  onChange={(e) => handleSubParentChange(e.target.value)}
+                  className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-100 focus:border-indigo-500 focus:outline-none"
+                >
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} ({p.productCode}) — Avail: {formatNumber(p.warehouseStock)} {p.unit}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Sub-Product Code *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={subCode}
+                    onChange={(e) => setSubCode(e.target.value)}
+                    placeholder="e.g. CM-SHIRT-01-S1"
+                    className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Sub-Product Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={subName}
+                    onChange={(e) => setSubName(e.target.value)}
+                    placeholder="e.g. Collar Stitching / Full Sleeve"
+                    className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Unit *
+                  </label>
+                  <select
+                    value={subUnit}
+                    onChange={(e) => setSubUnit(e.target.value as ProductUnit)}
+                    className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                  >
+                    {UNITS.map((u) => (
+                      <option key={u} value={u}>
+                        {u}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Sub-Product Value Rate (₹) *
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    required
+                    value={subRate}
+                    onChange={(e) => setSubRate(e.target.value)}
+                    className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm font-mono focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-indigo-800 mb-1">
+                    Employee Labour Rate for this Sub-Product (₹ / {subUnit}) *
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    required
+                    value={subLabourRate}
+                    onChange={(e) => setSubLabourRate(e.target.value)}
+                    className="w-full rounded-md border border-indigo-300 bg-indigo-50/40 px-3 py-2 text-sm font-mono font-semibold text-slate-900 focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Work Specification / Notes
+                </label>
+                <input
+                  type="text"
+                  value={subDescription}
+                  onChange={(e) => setSubDescription(e.target.value)}
+                  placeholder="Optional stitching / finishing instructions..."
+                  className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                />
+              </div>
+
+              {editingSubProduct && (
+                <label className="flex items-center gap-2 text-sm text-slate-700 select-none">
+                  <input
+                    type="checkbox"
+                    checked={subIsActive}
+                    onChange={(e) => setSubIsActive(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span>Active (available for new task assignments)</span>
+                </label>
+              )}
+
+              <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setSubModalOpen(false)}
+                  className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {busy ? 'Saving...' : editingSubProduct ? 'Save Sub-Product' : 'Create Sub-Product'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Main Product Confirmation */}
       <ConfirmModal
         open={Boolean(deleteTarget)}
         title="Delete Product Record"
@@ -836,6 +1249,17 @@ export function StockManagementPage() {
         busy={busy}
         onConfirm={handleDeleteProduct}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      {/* Delete Sub-Product Confirmation */}
+      <ConfirmModal
+        open={Boolean(subDeleteTarget)}
+        title="Delete Sub-Product"
+        description={`Delete sub-product "${subDeleteTarget?.name}" (${subDeleteTarget?.subProductCode}) under "${subDeleteTarget?.parentProductName}"? Existing task and payment records remain intact.`}
+        confirmLabel="Delete Sub-Product"
+        busy={busy}
+        onConfirm={handleDeleteSubProduct}
+        onCancel={() => setSubDeleteTarget(null)}
       />
     </div>
   );

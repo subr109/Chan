@@ -33,6 +33,7 @@ import {
   Payment,
   Product,
   StockTransaction,
+  SubProduct,
   Task,
   UserProfile,
   WorkCompletion,
@@ -61,6 +62,7 @@ interface ErpContextValue {
   refreshAuthSession: () => Promise<void>;
   signOutUser: () => Promise<void>;
   products: Product[];
+  subProducts: SubProduct[];
   stockTransactions: StockTransaction[];
   employees: Employee[];
   tasks: Task[];
@@ -119,6 +121,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
 
   const [dataLoading, setDataLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
+  const [subProducts, setSubProducts] = useState<SubProduct[]>([]);
   const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [rawTasks, setRawTasks] = useState<Task[]>([]);
@@ -159,6 +162,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
       if (!currentUser || !currentUser.emailVerified) {
         setHasAdminDoc(false);
         setProducts([]);
+        setSubProducts([]);
         setStockTransactions([]);
         setEmployees([]);
         setRawTasks([]);
@@ -243,6 +247,19 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
           markLoaded();
         },
         (err) => handleFirestoreError(err, OperationType.LIST, 'products')
+      )
+    );
+
+    unsubs.push(
+      onSnapshot(
+        buildRef('subProducts', 'createdBy'),
+        (snap) => {
+          const items = snap.docs
+            .map((d) => ({ id: d.id, ...(d.data() as Omit<SubProduct, 'id'>) }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+          setSubProducts(items);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'subProducts')
       )
     );
 
@@ -548,6 +565,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     refreshAuthSession,
     signOutUser,
     products,
+    subProducts,
     stockTransactions,
     employees,
     tasks,
