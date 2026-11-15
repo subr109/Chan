@@ -1,0 +1,320 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Garment product or raw material item tracked in warehouse, employee-held, finished goods, and damaged stock.",
+      "type": "object",
+      "properties": {
+        "productCode": { "type": "string", "minLength": 2, "maxLength": 40, "pattern": "^[A-Za-z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "unit": { "type": "string", "enum": ["Pieces", "Meters", "Rolls", "Sets", "Dozens"], "maxLength": 20 },
+        "rate": { "type": "number" },
+        "defaultLabourRate": { "type": "number" },
+        "openingStock": { "type": "number" },
+        "stockReceived": { "type": "number" },
+        "stockIssued": { "type": "number" },
+        "stockReturned": { "type": "number" },
+        "damagedStock": { "type": "number" },
+        "otherDeductions": { "type": "number" },
+        "warehouseStock": { "type": "number" },
+        "employeeHeldStock": { "type": "number" },
+        "finishedGoodsStock": { "type": "number" },
+        "minStockLevel": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "productCode", "name", "category", "unit", "rate", "defaultLabourRate",
+        "openingStock", "stockReceived", "stockIssued", "stockReturned",
+        "damagedStock", "otherDeductions", "warehouseStock", "employeeHeldStock",
+        "finishedGoodsStock", "minStockLevel", "isActive", "createdBy", "createdAt", "updatedAt"
+      ]
+    },
+    "StockTransaction": {
+      "title": "StockTransaction",
+      "description": "Immutable stock movement audit ledger entry.",
+      "type": "object",
+      "properties": {
+        "transactionCode": { "type": "string", "minLength": 3, "maxLength": 60, "pattern": "^[A-Za-z0-9_\\-]+$" },
+        "productId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "productName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "productCode": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "type": {
+          "type": "string",
+          "enum": ["OPENING", "RECEIVE", "ISSUE", "RETURN_UNUSED", "WORK_ACCEPTED", "WORK_REJECTED", "DAMAGE_DEDUCTION", "AUTHORIZED_ADJUSTMENT"]
+        },
+        "quantity": { "type": "number" },
+        "warehouseDelta": { "type": "number" },
+        "employeeHeldDelta": { "type": "number" },
+        "finishedGoodsDelta": { "type": "number" },
+        "damagedDelta": { "type": "number" },
+        "previousWarehouseStock": { "type": "number" },
+        "newWarehouseStock": { "type": "number" },
+        "employeeId": { "type": "string", "maxLength": 128 },
+        "employeeName": { "type": "string", "maxLength": 100 },
+        "referenceId": { "type": "string", "maxLength": 128 },
+        "remarks": { "type": "string", "maxLength": 500 },
+        "isAuthorizedAdjustment": { "type": "boolean" },
+        "performedBy": { "type": "string", "maxLength": 128 },
+        "performedByEmail": { "type": "string", "maxLength": 160 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "transactionCode", "productId", "productName", "productCode", "type",
+        "quantity", "warehouseDelta", "employeeHeldDelta", "finishedGoodsDelta",
+        "damagedDelta", "previousWarehouseStock", "newWarehouseStock",
+        "employeeId", "employeeName", "referenceId", "remarks",
+        "isAuthorizedAdjustment", "performedBy", "performedByEmail", "createdAt"
+      ]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Factory worker or artisan profile with stock balance and earnings ledger totals.",
+      "type": "object",
+      "properties": {
+        "employeeCode": { "type": "string", "minLength": 2, "maxLength": 40, "pattern": "^[A-Za-z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "address": { "type": "string", "maxLength": 300 },
+        "joiningDate": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "workCategory": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "paymentType": { "type": "string", "enum": ["Per Piece", "Per Unit", "Batch Rate"] },
+        "perPieceRate": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Inactive"] },
+        "totalStockReceived": { "type": "number" },
+        "totalWorkCompleted": { "type": "number" },
+        "totalAcceptedQty": { "type": "number" },
+        "totalRejectedQty": { "type": "number" },
+        "totalUnusedReturned": { "type": "number" },
+        "currentMaterialBalance": { "type": "number" },
+        "totalApprovedEarnings": { "type": "number" },
+        "totalPaid": { "type": "number" },
+        "outstandingBalance": { "type": "number" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "employeeCode", "name", "phone", "address", "joiningDate", "workCategory",
+        "paymentType", "perPieceRate", "status", "totalStockReceived", "totalWorkCompleted",
+        "totalAcceptedQty", "totalRejectedQty", "totalUnusedReturned", "currentMaterialBalance",
+        "totalApprovedEarnings", "totalPaid", "outstandingBalance", "createdBy", "createdAt", "updatedAt"
+      ]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Stock issue and manufacturing task assigned to an employee.",
+      "type": "object",
+      "properties": {
+        "issueCode": { "type": "string", "minLength": 3, "maxLength": 60, "pattern": "^[A-Za-z0-9_\\-]+$" },
+        "employeeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "employeeCode": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "employeeName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "productId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "productCode": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "productName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "unit": { "type": "string", "minLength": 1, "maxLength": 20 },
+        "quantityIssued": { "type": "number" },
+        "perUnitRate": { "type": "number" },
+        "totalExpectedPayment": { "type": "number" },
+        "issueDate": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "expectedCompletionDate": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "completedAcceptedQty": { "type": "number" },
+        "completedRejectedQty": { "type": "number" },
+        "approvedRejectedQty": { "type": "number" },
+        "returnedUnusedQty": { "type": "number" },
+        "pendingQty": { "type": "number" },
+        "earnedAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["Pending", "In Progress", "Completed", "Overdue"] },
+        "paymentStatus": { "type": "string", "enum": ["Unpaid", "Partial", "Paid"] },
+        "lastCompletionDate": { "type": "string", "maxLength": 20 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "issueCode", "employeeId", "employeeCode", "employeeName", "productId",
+        "productCode", "productName", "unit", "quantityIssued", "perUnitRate",
+        "totalExpectedPayment", "issueDate", "expectedCompletionDate", "notes",
+        "completedAcceptedQty", "completedRejectedQty", "approvedRejectedQty",
+        "returnedUnusedQty", "pendingQty", "earnedAmount", "status", "paymentStatus",
+        "lastCompletionDate", "createdBy", "createdAt", "updatedAt"
+      ]
+    },
+    "WorkCompletion": {
+      "title": "WorkCompletion",
+      "description": "Installment work completion entry linked to a stock issue task.",
+      "type": "object",
+      "properties": {
+        "completionCode": { "type": "string", "minLength": 3, "maxLength": 60, "pattern": "^[A-Za-z0-9_\\-]+$" },
+        "taskId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "issueCode": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "employeeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "employeeName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "productId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "productName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "previouslyPendingQty": { "type": "number" },
+        "newlyCompletedQty": { "type": "number" },
+        "acceptedQty": { "type": "number" },
+        "rejectedQty": { "type": "number" },
+        "rejectedApprovedForPay": { "type": "boolean" },
+        "rejectedApprovalBy": { "type": "string", "maxLength": 160 },
+        "unusedReturnedQty": { "type": "number" },
+        "remainingWorkQty": { "type": "number" },
+        "perUnitRate": { "type": "number" },
+        "earnedAmount": { "type": "number" },
+        "completionDate": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "remarks": { "type": "string", "maxLength": 500 },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "completionCode", "taskId", "issueCode", "employeeId", "employeeName",
+        "productId", "productName", "previouslyPendingQty", "newlyCompletedQty",
+        "acceptedQty", "rejectedQty", "rejectedApprovedForPay", "rejectedApprovalBy",
+        "unusedReturnedQty", "remainingWorkQty", "perUnitRate", "earnedAmount",
+        "completionDate", "remarks", "createdBy", "createdAt"
+      ]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Employee wage or advance payment ledger entry.",
+      "type": "object",
+      "properties": {
+        "paymentCode": { "type": "string", "minLength": 3, "maxLength": 60, "pattern": "^[A-Za-z0-9_\\-]+$" },
+        "employeeId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "employeeCode": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "employeeName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "amount": { "type": "number" },
+        "paymentType": { "type": "string", "enum": ["Regular Payment", "Advance Payment", "Settlement"] },
+        "paymentDate": { "type": "string", "minLength": 8, "maxLength": 20 },
+        "paymentMethod": { "type": "string", "enum": ["Cash", "Bank Transfer", "UPI", "Cheque"] },
+        "paymentReference": { "type": "string", "maxLength": 100 },
+        "notes": { "type": "string", "maxLength": 300 },
+        "previousBalance": { "type": "number" },
+        "remainingBalanceAfter": { "type": "number" },
+        "isPaymentDone": { "type": "boolean" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "paymentCode", "employeeId", "employeeCode", "employeeName", "amount",
+        "paymentType", "paymentDate", "paymentMethod", "paymentReference", "notes",
+        "previousBalance", "remainingBalanceAfter", "isPaymentDone", "createdBy", "createdAt"
+      ]
+    },
+    "CompanySettings": {
+      "title": "CompanySettings",
+      "description": "Factory profile and operational threshold settings.",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "tagline": { "type": "string", "maxLength": 160 },
+        "address": { "type": "string", "maxLength": 300 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "email": { "type": "string", "maxLength": 160 },
+        "gstin": { "type": "string", "maxLength": 30 },
+        "defaultLowStockThreshold": { "type": "number" },
+        "allowNegativeStockOverride": { "type": "boolean" },
+        "adminLoginId": { "type": "string", "maxLength": 60 },
+        "adminPasswordHash": { "type": "string", "maxLength": 128 },
+        "updatedBy": { "type": "string", "maxLength": 128 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "companyName", "tagline", "address", "phone", "email", "gstin",
+        "defaultLowStockThreshold", "allowNegativeStockOverride",
+        "adminLoginId", "adminPasswordHash", "updatedBy", "updatedAt"
+      ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "ERP user profile and role assignment.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 160 },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["admin", "staff"] },
+        "isActive": { "type": "boolean" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "role", "isActive", "createdBy", "createdAt", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Authorized admin record granting elevated ERP permissions.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 160 },
+        "grantedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "grantedBy", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Authorized correction, rejection approval, and deletion audit trail.",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "entityType": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "entityId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "performedBy": { "type": "string", "maxLength": 128 },
+        "performedByEmail": { "type": "string", "maxLength": 160 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["action", "entityType", "entityId", "summary", "performedBy", "performedByEmail", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Garment products and raw material inventory items."
+    },
+    "/stockTransactions/{txId}": {
+      "schema": { "$ref": "#/entities/StockTransaction" },
+      "description": "Immutable stock movement transaction history."
+    },
+    "/employees/{employeeId}": {
+      "schema": { "$ref": "#/entities/Employee" },
+      "description": "Employee directory, stock balance, and payment ledger summary."
+    },
+    "/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/Task" },
+      "description": "Stock issue entries and assigned manufacturing tasks."
+    },
+    "/workCompletions/{completionId}": {
+      "schema": { "$ref": "#/entities/WorkCompletion" },
+      "description": "Partial or full work completion entries against tasks."
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Employee payment and advance ledger entries."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/CompanySettings" },
+      "description": "Company configuration and thresholds."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Authenticated user profile and ERP role."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Administrator registry for RBAC lookups."
+    },
+    "/auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Audit trail for authorized adjustments, approvals, and deletions."
+    }
+  }
+}

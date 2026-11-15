@@ -1,0 +1,558 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ---------------------------------------------------------
+    // Global Hardened Helpers
+    // ---------------------------------------------------------
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'sroy22000@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() ||
+        (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidCode(code) {
+      return code is string && code.size() >= 2 && code.size() <= 60 && code.matches('^[A-Za-z0-9_\\-]+$');
+    }
+
+    function isNonNegNum(val) {
+      return (val is int || val is float) && val >= 0;
+    }
+
+    function isPosNum(val) {
+      return (val is int || val is float) && val > 0;
+    }
+
+    function isAnyNum(val) {
+      return (val is int || val is float);
+    }
+
+    // ---------------------------------------------------------
+    // Validation Blueprints (Anti-Update-Gap)
+    // ---------------------------------------------------------
+    function isValidProduct(data) {
+      return data.keys().hasAll([
+          'productCode', 'name', 'category', 'unit', 'rate', 'defaultLabourRate',
+          'openingStock', 'stockReceived', 'stockIssued', 'stockReturned',
+          'damagedStock', 'otherDeductions', 'warehouseStock', 'employeeHeldStock',
+          'finishedGoodsStock', 'minStockLevel', 'isActive', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'productCode', 'name', 'category', 'unit', 'rate', 'defaultLabourRate',
+          'openingStock', 'stockReceived', 'stockIssued', 'stockReturned',
+          'damagedStock', 'otherDeductions', 'warehouseStock', 'employeeHeldStock',
+          'finishedGoodsStock', 'minStockLevel', 'isActive', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && isValidCode(data.productCode) && data.productCode.size() <= 40
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 60
+        && data.unit is string && data.unit in ['Pieces', 'Meters', 'Rolls', 'Sets', 'Dozens'] && data.unit.size() <= 20
+        && isNonNegNum(data.rate)
+        && isNonNegNum(data.defaultLabourRate)
+        && isNonNegNum(data.openingStock)
+        && isNonNegNum(data.stockReceived)
+        && isNonNegNum(data.stockIssued)
+        && isNonNegNum(data.stockReturned)
+        && isNonNegNum(data.damagedStock)
+        && isNonNegNum(data.otherDeductions)
+        && isAnyNum(data.warehouseStock) && (data.warehouseStock >= 0 || isAdmin())
+        && isNonNegNum(data.employeeHeldStock)
+        && isNonNegNum(data.finishedGoodsStock)
+        && isNonNegNum(data.minStockLevel)
+        && data.isActive is bool
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidStockTransaction(data) {
+      return data.keys().hasAll([
+          'transactionCode', 'productId', 'productName', 'productCode', 'type',
+          'quantity', 'warehouseDelta', 'employeeHeldDelta', 'finishedGoodsDelta',
+          'damagedDelta', 'previousWarehouseStock', 'newWarehouseStock',
+          'employeeId', 'employeeName', 'referenceId', 'remarks',
+          'isAuthorizedAdjustment', 'performedBy', 'performedByEmail', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'transactionCode', 'productId', 'productName', 'productCode', 'type',
+          'quantity', 'warehouseDelta', 'employeeHeldDelta', 'finishedGoodsDelta',
+          'damagedDelta', 'previousWarehouseStock', 'newWarehouseStock',
+          'employeeId', 'employeeName', 'referenceId', 'remarks',
+          'isAuthorizedAdjustment', 'performedBy', 'performedByEmail', 'createdAt'
+        ])
+        && isValidCode(data.transactionCode) && data.transactionCode.size() >= 3
+        && isValidId(data.productId)
+        && data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120
+        && data.productCode is string && data.productCode.size() >= 1 && data.productCode.size() <= 40
+        && data.type is string && data.type in [
+          'OPENING', 'RECEIVE', 'ISSUE', 'RETURN_UNUSED',
+          'WORK_ACCEPTED', 'WORK_REJECTED', 'DAMAGE_DEDUCTION', 'AUTHORIZED_ADJUSTMENT'
+        ]
+        && isAnyNum(data.quantity)
+        && isAnyNum(data.warehouseDelta)
+        && isAnyNum(data.employeeHeldDelta)
+        && isAnyNum(data.finishedGoodsDelta)
+        && isAnyNum(data.damagedDelta)
+        && isAnyNum(data.previousWarehouseStock)
+        && isAnyNum(data.newWarehouseStock)
+        && data.employeeId is string && data.employeeId.size() <= 128
+        && data.employeeName is string && data.employeeName.size() <= 100
+        && data.referenceId is string && data.referenceId.size() <= 128
+        && data.remarks is string && data.remarks.size() <= 500
+        && data.isAuthorizedAdjustment is bool
+        && data.performedBy is string && data.performedBy.size() >= 1 && data.performedBy.size() <= 128
+        && data.performedByEmail is string && data.performedByEmail.size() <= 160
+        && data.createdAt is timestamp;
+    }
+
+    function isValidEmployee(data) {
+      return data.keys().hasAll([
+          'employeeCode', 'name', 'phone', 'address', 'joiningDate', 'workCategory',
+          'paymentType', 'perPieceRate', 'status', 'totalStockReceived', 'totalWorkCompleted',
+          'totalAcceptedQty', 'totalRejectedQty', 'totalUnusedReturned', 'currentMaterialBalance',
+          'totalApprovedEarnings', 'totalPaid', 'outstandingBalance', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'employeeCode', 'name', 'phone', 'address', 'joiningDate', 'workCategory',
+          'paymentType', 'perPieceRate', 'status', 'totalStockReceived', 'totalWorkCompleted',
+          'totalAcceptedQty', 'totalRejectedQty', 'totalUnusedReturned', 'currentMaterialBalance',
+          'totalApprovedEarnings', 'totalPaid', 'outstandingBalance', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && isValidCode(data.employeeCode) && data.employeeCode.size() <= 40
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 100
+        && data.phone is string && data.phone.size() <= 30
+        && data.address is string && data.address.size() <= 300
+        && data.joiningDate is string && data.joiningDate.size() >= 8 && data.joiningDate.size() <= 20
+        && data.workCategory is string && data.workCategory.size() >= 1 && data.workCategory.size() <= 60
+        && data.paymentType is string && data.paymentType in ['Per Piece', 'Per Unit', 'Batch Rate']
+        && isNonNegNum(data.perPieceRate)
+        && data.status is string && data.status in ['Active', 'Inactive']
+        && isNonNegNum(data.totalStockReceived)
+        && isNonNegNum(data.totalWorkCompleted)
+        && isNonNegNum(data.totalAcceptedQty)
+        && isNonNegNum(data.totalRejectedQty)
+        && isNonNegNum(data.totalUnusedReturned)
+        && isNonNegNum(data.currentMaterialBalance)
+        && isNonNegNum(data.totalApprovedEarnings)
+        && isNonNegNum(data.totalPaid)
+        && isAnyNum(data.outstandingBalance)
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTask(data) {
+      return data.keys().hasAll([
+          'issueCode', 'employeeId', 'employeeCode', 'employeeName', 'productId',
+          'productCode', 'productName', 'unit', 'quantityIssued', 'perUnitRate',
+          'totalExpectedPayment', 'issueDate', 'expectedCompletionDate', 'notes',
+          'completedAcceptedQty', 'completedRejectedQty', 'approvedRejectedQty',
+          'returnedUnusedQty', 'pendingQty', 'earnedAmount', 'status', 'paymentStatus',
+          'lastCompletionDate', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'issueCode', 'employeeId', 'employeeCode', 'employeeName', 'productId',
+          'productCode', 'productName', 'unit', 'quantityIssued', 'perUnitRate',
+          'totalExpectedPayment', 'issueDate', 'expectedCompletionDate', 'notes',
+          'completedAcceptedQty', 'completedRejectedQty', 'approvedRejectedQty',
+          'returnedUnusedQty', 'pendingQty', 'earnedAmount', 'status', 'paymentStatus',
+          'lastCompletionDate', 'createdBy', 'createdAt', 'updatedAt'
+        ])
+        && isValidCode(data.issueCode) && data.issueCode.size() >= 3
+        && isValidId(data.employeeId)
+        && data.employeeCode is string && data.employeeCode.size() >= 1 && data.employeeCode.size() <= 40
+        && data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 100
+        && isValidId(data.productId)
+        && data.productCode is string && data.productCode.size() >= 1 && data.productCode.size() <= 40
+        && data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120
+        && data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 20
+        && isPosNum(data.quantityIssued)
+        && isNonNegNum(data.perUnitRate)
+        && isNonNegNum(data.totalExpectedPayment)
+        && data.issueDate is string && data.issueDate.size() >= 8 && data.issueDate.size() <= 20
+        && data.expectedCompletionDate is string && data.expectedCompletionDate.size() >= 8 && data.expectedCompletionDate.size() <= 20
+        && data.notes is string && data.notes.size() <= 500
+        && isNonNegNum(data.completedAcceptedQty)
+        && isNonNegNum(data.completedRejectedQty)
+        && isNonNegNum(data.approvedRejectedQty)
+        && isNonNegNum(data.returnedUnusedQty)
+        && isNonNegNum(data.pendingQty)
+        && isNonNegNum(data.earnedAmount)
+        && data.status is string && data.status in ['Pending', 'In Progress', 'Completed', 'Overdue']
+        && data.paymentStatus is string && data.paymentStatus in ['Unpaid', 'Partial', 'Paid']
+        && data.lastCompletionDate is string && data.lastCompletionDate.size() <= 20
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWorkCompletion(data) {
+      return data.keys().hasAll([
+          'completionCode', 'taskId', 'issueCode', 'employeeId', 'employeeName',
+          'productId', 'productName', 'previouslyPendingQty', 'newlyCompletedQty',
+          'acceptedQty', 'rejectedQty', 'rejectedApprovedForPay', 'rejectedApprovalBy',
+          'unusedReturnedQty', 'remainingWorkQty', 'perUnitRate', 'earnedAmount',
+          'completionDate', 'remarks', 'createdBy', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'completionCode', 'taskId', 'issueCode', 'employeeId', 'employeeName',
+          'productId', 'productName', 'previouslyPendingQty', 'newlyCompletedQty',
+          'acceptedQty', 'rejectedQty', 'rejectedApprovedForPay', 'rejectedApprovalBy',
+          'unusedReturnedQty', 'remainingWorkQty', 'perUnitRate', 'earnedAmount',
+          'completionDate', 'remarks', 'createdBy', 'createdAt'
+        ])
+        && isValidCode(data.completionCode) && data.completionCode.size() >= 3
+        && isValidId(data.taskId)
+        && data.issueCode is string && data.issueCode.size() >= 1 && data.issueCode.size() <= 60
+        && isValidId(data.employeeId)
+        && data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 100
+        && isValidId(data.productId)
+        && data.productName is string && data.productName.size() >= 1 && data.productName.size() <= 120
+        && isNonNegNum(data.previouslyPendingQty)
+        && isNonNegNum(data.newlyCompletedQty)
+        && isNonNegNum(data.acceptedQty)
+        && isNonNegNum(data.rejectedQty)
+        && data.rejectedApprovedForPay is bool
+        && data.rejectedApprovalBy is string && data.rejectedApprovalBy.size() <= 160
+        && isNonNegNum(data.unusedReturnedQty)
+        && isNonNegNum(data.remainingWorkQty)
+        && isNonNegNum(data.perUnitRate)
+        && isNonNegNum(data.earnedAmount)
+        && data.completionDate is string && data.completionDate.size() >= 8 && data.completionDate.size() <= 20
+        && data.remarks is string && data.remarks.size() <= 500
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll([
+          'paymentCode', 'employeeId', 'employeeCode', 'employeeName', 'amount',
+          'paymentType', 'paymentDate', 'paymentMethod', 'paymentReference', 'notes',
+          'previousBalance', 'remainingBalanceAfter', 'isPaymentDone', 'createdBy', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'paymentCode', 'employeeId', 'employeeCode', 'employeeName', 'amount',
+          'paymentType', 'paymentDate', 'paymentMethod', 'paymentReference', 'notes',
+          'previousBalance', 'remainingBalanceAfter', 'isPaymentDone', 'createdBy', 'createdAt'
+        ])
+        && isValidCode(data.paymentCode) && data.paymentCode.size() >= 3
+        && isValidId(data.employeeId)
+        && data.employeeCode is string && data.employeeCode.size() >= 1 && data.employeeCode.size() <= 40
+        && data.employeeName is string && data.employeeName.size() >= 1 && data.employeeName.size() <= 100
+        && isPosNum(data.amount)
+        && data.paymentType is string && data.paymentType in ['Regular Payment', 'Advance Payment', 'Settlement']
+        && data.paymentDate is string && data.paymentDate.size() >= 8 && data.paymentDate.size() <= 20
+        && data.paymentMethod is string && data.paymentMethod in ['Cash', 'Bank Transfer', 'UPI', 'Cheque']
+        && data.paymentReference is string && data.paymentReference.size() <= 100
+        && data.notes is string && data.notes.size() <= 300
+        && isAnyNum(data.previousBalance)
+        && isAnyNum(data.remainingBalanceAfter)
+        && data.isPaymentDone is bool
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    function isValidCompanySettings(data) {
+      return data.keys().hasAll([
+          'companyName', 'tagline', 'address', 'phone', 'email', 'gstin',
+          'defaultLowStockThreshold', 'allowNegativeStockOverride',
+          'adminLoginId', 'adminPasswordHash', 'updatedBy', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'companyName', 'tagline', 'address', 'phone', 'email', 'gstin',
+          'defaultLowStockThreshold', 'allowNegativeStockOverride',
+          'adminLoginId', 'adminPasswordHash', 'updatedBy', 'updatedAt'
+        ])
+        && data.companyName is string && data.companyName.size() >= 1 && data.companyName.size() <= 120
+        && data.tagline is string && data.tagline.size() <= 160
+        && data.address is string && data.address.size() <= 300
+        && data.phone is string && data.phone.size() <= 30
+        && data.email is string && data.email.size() <= 160
+        && data.gstin is string && data.gstin.size() <= 30
+        && isNonNegNum(data.defaultLowStockThreshold)
+        && data.allowNegativeStockOverride is bool
+        && data.adminLoginId is string && data.adminLoginId.size() >= 1 && data.adminLoginId.size() <= 60
+        && data.adminPasswordHash is string && data.adminPasswordHash.size() >= 1 && data.adminPasswordHash.size() <= 128
+        && data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'isActive', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'isActive', 'createdBy', 'createdAt', 'updatedAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.email is string && data.email.size() <= 160
+        && data.displayName is string && data.displayName.size() <= 100
+        && data.role is string && data.role in ['admin', 'staff']
+        && data.isActive is bool
+        && data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'email', 'grantedBy', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'grantedBy', 'createdAt'])
+        && data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128
+        && data.email is string && data.email.size() <= 160
+        && data.grantedBy is string && data.grantedBy.size() >= 1 && data.grantedBy.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['action', 'entityType', 'entityId', 'summary', 'performedBy', 'performedByEmail', 'createdAt'])
+        && data.keys().hasOnly(['action', 'entityType', 'entityId', 'summary', 'performedBy', 'performedByEmail', 'createdAt'])
+        && data.action is string && data.action.size() >= 1 && data.action.size() <= 80
+        && data.entityType is string && data.entityType.size() >= 1 && data.entityType.size() <= 40
+        && data.entityId is string && data.entityId.size() >= 1 && data.entityId.size() <= 128
+        && data.summary is string && data.summary.size() >= 1 && data.summary.size() <= 400
+        && data.performedBy is string && data.performedBy.size() >= 1 && data.performedBy.size() <= 128
+        && data.performedByEmail is string && data.performedByEmail.size() <= 160
+        && data.createdAt is timestamp;
+    }
+
+    // ---------------------------------------------------------
+    // Collection Rules
+    // ---------------------------------------------------------
+
+    match /products/{productId} {
+      allow get: if isValidId(productId) && (isAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid);
+      allow create: if isValidId(productId)
+        && isVerifiedUser()
+        && isValidProduct(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(productId)
+        && isVerifiedUser()
+        && isValidProduct(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (existing().createdBy == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'productCode', 'name', 'category', 'unit', 'rate', 'defaultLabourRate',
+            'stockReceived', 'stockIssued', 'stockReturned', 'damagedStock', 'otherDeductions',
+            'warehouseStock', 'employeeHeldStock', 'finishedGoodsStock', 'minStockLevel', 'isActive', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(productId) && isAdmin();
+    }
+
+    match /stockTransactions/{txId} {
+      allow get: if isValidId(txId) && (isAdmin() || (isVerifiedUser() && existing().performedBy == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().performedBy == request.auth.uid);
+      allow create: if isValidId(txId)
+        && isVerifiedUser()
+        && isValidStockTransaction(incoming())
+        && incoming().performedBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/products/$(incoming().productId))
+        && (!incoming().isAuthorizedAdjustment || isAdmin());
+      allow update, delete: if false;
+    }
+
+    match /employees/{employeeId} {
+      allow get: if isValidId(employeeId) && (isAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid);
+      allow create: if isValidId(employeeId)
+        && isVerifiedUser()
+        && isValidEmployee(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(employeeId)
+        && isVerifiedUser()
+        && isValidEmployee(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (existing().createdBy == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly([
+            'employeeCode', 'name', 'phone', 'address', 'joiningDate', 'workCategory',
+            'paymentType', 'perPieceRate', 'status', 'totalStockReceived', 'totalWorkCompleted',
+            'totalAcceptedQty', 'totalRejectedQty', 'totalUnusedReturned', 'currentMaterialBalance',
+            'totalApprovedEarnings', 'totalPaid', 'outstandingBalance', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(employeeId) && isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow get: if isValidId(taskId) && (isAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid);
+      allow create: if isValidId(taskId)
+        && isVerifiedUser()
+        && isValidTask(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/employees/$(incoming().employeeId))
+        && existsAfter(/databases/$(database)/documents/products/$(incoming().productId));
+      allow update: if isValidId(taskId)
+        && isVerifiedUser()
+        && isValidTask(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().employeeId == existing().employeeId
+        && incoming().productId == existing().productId
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            existing().status != 'Completed' &&
+            existing().createdBy == request.auth.uid &&
+            incoming().approvedRejectedQty == existing().approvedRejectedQty &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'completedAcceptedQty', 'completedRejectedQty', 'returnedUnusedQty',
+              'pendingQty', 'earnedAmount', 'status', 'paymentStatus', 'lastCompletionDate', 'notes', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(taskId) && isAdmin();
+    }
+
+    match /workCompletions/{completionId} {
+      allow get: if isValidId(completionId) && (isAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid);
+      allow create: if isValidId(completionId)
+        && isVerifiedUser()
+        && isValidWorkCompletion(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && (!incoming().rejectedApprovedForPay || isAdmin())
+        && existsAfter(/databases/$(database)/documents/tasks/$(incoming().taskId))
+        && existsAfter(/databases/$(database)/documents/employees/$(incoming().employeeId))
+        && existsAfter(/databases/$(database)/documents/products/$(incoming().productId));
+      allow update: if isValidId(completionId)
+        && isAdmin()
+        && isValidWorkCompletion(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().taskId == existing().taskId
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'rejectedApprovedForPay', 'rejectedApprovalBy', 'earnedAmount', 'remarks'
+        ]);
+      allow delete: if isValidId(completionId) && isAdmin();
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isValidId(paymentId) && (isAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().createdBy == request.auth.uid);
+      allow create: if isValidId(paymentId)
+        && isVerifiedUser()
+        && isValidPayment(incoming())
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/employees/$(incoming().employeeId));
+      allow update: if isValidId(paymentId)
+        && isVerifiedUser()
+        && isValidPayment(incoming())
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && (
+          isAdmin() ||
+          (existing().createdBy == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['isPaymentDone']))
+        );
+      allow delete: if isValidId(paymentId) && isAdmin();
+    }
+
+    match /settings/{settingId} {
+      allow get: if isValidId(settingId) && (isAdmin() || (isVerifiedUser() && existing().updatedBy == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().updatedBy == request.auth.uid);
+      allow create, update: if isValidId(settingId)
+        && isAdmin()
+        && isValidCompanySettings(incoming())
+        && incoming().updatedBy == request.auth.uid
+        && incoming().updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isAdmin() || (isVerifiedUser() && request.auth.uid == userId));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().uid == request.auth.uid);
+      allow create: if isValidId(userId)
+        && isVerifiedUser()
+        && isValidUserProfile(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (request.auth.uid == userId && incoming().role == 'staff' && incoming().createdBy == request.auth.uid)
+        );
+      allow update: if isValidId(userId)
+        && isVerifiedUser()
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (
+            request.auth.uid == userId &&
+            incoming().role == existing().role &&
+            incoming().isActive == existing().isActive &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt'])
+          )
+        );
+      allow delete: if isValidId(userId) && isAdmin();
+    }
+
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && (isAdmin() || (isVerifiedUser() && request.auth.uid == adminId));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().uid == request.auth.uid);
+      allow create: if isValidId(adminId)
+        && isAdmin()
+        && isValidAdminRecord(incoming())
+        && incoming().uid == adminId
+        && incoming().grantedBy == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(adminId) && isAdmin() && adminId != request.auth.uid;
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isValidId(logId) && (isAdmin() || (isVerifiedUser() && existing().performedBy == request.auth.uid));
+      allow list: if isBootstrappedAdmin() || (isVerifiedUser() && existing().performedBy == request.auth.uid);
+      allow create: if isValidId(logId)
+        && isVerifiedUser()
+        && isValidAuditLog(incoming())
+        && incoming().performedBy == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+  }
+}

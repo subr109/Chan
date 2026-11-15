@@ -1,0 +1,6 @@
+{
+  "name": "Chandramukhi Implex ERP",
+  "description": "Garments Manufacturing Management System for Chandramukhi Implex Pvt. Ltd. covering Stock Management, Employee Management, Task & Production Tracking, Payment Ledger, and Reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
