@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Factory, ShieldCheck, Eye, EyeOff, Lock } from 'lucide-react';
 import { ErpProvider, useErp } from './context/ErpContext';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Layout } from './components/Layout';
 import { DashboardPage } from './pages/DashboardPage';
 import { StockManagementPage } from './pages/StockManagementPage';
@@ -159,8 +160,10 @@ function AppContent() {
 
 export default function App() {
   return (
-    <ErpProvider>
-      <AppContent />
-    </ErpProvider>
+    <ErrorBoundary>
+      <ErpProvider>
+        <AppContent />
+      </ErpProvider>
+    </ErrorBoundary>
   );
 }
