@@ -52,6 +52,7 @@ interface ErpContextValue {
   authError: string | null;
   authNotice: string | null;
   needsPasswordSetup: boolean;
+  needsProviderEnable: boolean;
   isAdmin: boolean;
   dataLoading: boolean;
   signInWithAdminCredentials: (loginId: string, password: string) => Promise<void>;
@@ -113,6 +114,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [needsPasswordSetup, setNeedsPasswordSetup] = useState(false);
+  const [needsProviderEnable, setNeedsProviderEnable] = useState(false);
   const [hasAdminDoc, setHasAdminDoc] = useState(false);
 
   const [dataLoading, setDataLoading] = useState(true);
@@ -389,6 +391,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     setAuthError(null);
     setAuthNotice(null);
     setNeedsPasswordSetup(false);
+    setNeedsProviderEnable(false);
 
     const trimmedId = loginId.trim();
     if (!trimmedId || !password) {
@@ -426,6 +429,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
         const code = (signInErr as { code?: string })?.code || '';
 
         if (code === 'auth/operation-not-allowed') {
+          setNeedsProviderEnable(true);
           setAuthError(
             'Email/Password sign-in is disabled in Firebase Console. Enable Email/Password under Authentication → Sign-in method for project pivotal-rampart-7cbh2, then sign in again.'
           );
@@ -458,6 +462,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
               return;
             }
             if (createCode === 'auth/operation-not-allowed') {
+              setNeedsProviderEnable(true);
               setAuthError(
                 'Email/Password sign-in is disabled in Firebase Console. Enable Email/Password under Authentication → Sign-in method for project pivotal-rampart-7cbh2, then sign in again.'
               );
@@ -534,6 +539,7 @@ export function ErpProvider({ children }: { children: React.ReactNode }) {
     authError,
     authNotice,
     needsPasswordSetup,
+    needsProviderEnable,
     isAdmin,
     dataLoading,
     signInWithAdminCredentials,

@@ -19,6 +19,7 @@ function AppContent() {
     authError,
     authNotice,
     needsPasswordSetup,
+    needsProviderEnable,
     signInWithAdminCredentials,
     sendAdminPasswordSetupEmail,
     resendVerificationEmail,
@@ -118,6 +119,16 @@ function AppContent() {
             {authError && (
               <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 space-y-2">
                 <p>{authError}</p>
+                {needsProviderEnable && (
+                  <a
+                    href="https://console.firebase.google.com/project/pivotal-rampart-7cbh2/authentication/providers"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center rounded bg-red-700 px-2.5 py-1 text-[11px] font-medium text-white hover:bg-red-800"
+                  >
+                    Open Firebase Sign-in Method Settings
+                  </a>
+                )}
                 {needsPasswordSetup && (
                   <button
                     type="button"
