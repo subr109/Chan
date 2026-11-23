@@ -445,7 +445,8 @@ service cloud.firestore {
         && incoming().createdAt == request.time
         && existsAfter(/databases/$(database)/documents/products/$(incoming().productId))
         && (!incoming().isAuthorizedAdjustment || isAdmin());
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isValidId(txId) && isAdmin();
     }
 
     match /employees/{employeeId} {
@@ -618,7 +619,8 @@ service cloud.firestore {
         && isValidAuditLog(incoming())
         && incoming().performedBy == request.auth.uid
         && incoming().createdAt == request.time;
-      allow update, delete: if false;
+      allow update: if false;
+      allow delete: if isValidId(logId) && isAdmin();
     }
   }
 }

@@ -1,13 +1,17 @@
 import {
+  collection,
   doc,
+  getDocs,
+  query,
   runTransaction,
   serverTimestamp,
   writeBatch,
   setDoc,
   updateDoc,
   deleteDoc,
+  where,
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError } from '../lib/firebase';
+import { BOOTSTRAPPED_ADMIN_EMAIL, auth, db, handleFirestoreError } from '../lib/firebase';
 import {
   clampString,
   generateDocId,
@@ -1350,6 +1354,100 @@ export async function toggleUserActive(targetUid: string, isActive: boolean): Pr
   } catch (err) {
     if (isPermissionError(err)) {
       handleFirestoreError(err, OperationType.UPDATE, `users/${targetUid}`);
+    }
+    throw err;
+  }
+}
+
+export interface ResetAllDataOptions {
+  isAdmin: boolean;
+  resetSettings: boolean;
+  clearAuditLogs: boolean;
+}
+
+export async function resetAllErpData(
+  options: ResetAllDataOptions
+): Promise<{ deletedCount: number }> {
+  const user = requireUser();
+  if (!options.isAdmin) {
+    throw new Error('Only an administrator can reset system data.');
+  }
+
+  const isBootstrapped =
+    (user.email || '').toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase();
+
+  const targets: Array<{ col: string; ownerField: string }> = [
+    { col: 'workCompletions', ownerField: 'createdBy' },
+    { col: 'tasks', ownerField: 'createdBy' },
+    { col: 'payments', ownerField: 'createdBy' },
+    { col: 'stockTransactions', ownerField: 'performedBy' },
+    { col: 'subProducts', ownerField: 'createdBy' },
+    { col: 'products', ownerField: 'createdBy' },
+    { col: 'employees', ownerField: 'createdBy' },
+  ];
+
+  if (options.clearAuditLogs) {
+    targets.push({ col: 'auditLogs', ownerField: 'performedBy' });
+  }
+
+  let deletedCount = 0;
+
+  try {
+    for (const target of targets) {
+      const colRef = collection(db, target.col);
+      const q = isBootstrapped
+        ? colRef
+        : query(colRef, where(target.ownerField, '==', user.uid));
+      const snap = await getDocs(q);
+      const refs = snap.docs.map((d) => d.ref);
+
+      for (let i = 0; i < refs.length; i += 400) {
+        const chunk = refs.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((ref) => batch.delete(ref));
+        await batch.commit();
+        deletedCount += chunk.length;
+      }
+    }
+
+    if (options.resetSettings) {
+      const defaultPwdHash = await sha256Hex('Admin@123');
+      await saveCompanySettings({
+        companyName: 'Chandramukhi Implex Pvt. Ltd.',
+        tagline: 'Garments Manufacturing & Apparel Production ERP',
+        address: 'Industrial Garment Zone, Sector 4, India',
+        phone: '+91 98000 00000',
+        email: 'operations@chandramukhiimplex.com',
+        gstin: '',
+        defaultLowStockThreshold: 50,
+        allowNegativeStockOverride: false,
+        adminLoginId: 'admin',
+        adminPasswordHash: defaultPwdHash,
+      });
+      try {
+        localStorage.removeItem('cm_admin_creds_v2');
+        localStorage.removeItem('cm_admin_creds');
+      } catch {
+        // ignore storage errors
+      }
+    }
+
+    if (!options.clearAuditLogs) {
+      await setDoc(doc(db, 'auditLogs', generateDocId('log')), {
+        action: 'FACTORY_RESET',
+        entityType: 'System',
+        entityId: 'erp_workspace',
+        summary: `Full ERP data reset completed (${deletedCount} records removed).`,
+        performedBy: user.uid,
+        performedByEmail: clampString(user.email || '', 160),
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    return { deletedCount };
+  } catch (err) {
+    if (isPermissionError(err)) {
+      handleFirestoreError(err, OperationType.DELETE, 'factory_reset');
     }
     throw err;
   }

@@ -4,7 +4,7 @@
 1. **Verified Identity**: Every read and write requires `request.auth != null && request.auth.token.email_verified == true`.
 2. **Admin & Ownership Isolation**: Only the bootstrapped admin (`sroy22000@gmail.com`), users listed in `/admins/{uid}`, or the document's `createdBy` owner (`resource.data.createdBy == request.auth.uid`) can access operational records. PII in `/employees` and `/users` is never exposed to unauthenticated or unrelated users.
 3. **Strict Schema Enforcement**: Every `create` and `update` must pass `isValid[Entity](incoming())`, enforcing exact allowed keys (`hasAll` + `hasOnly`), string length limits, numeric bounds (e.g. `warehouseStock >= 0`, `amount > 0`), and regex ID guards (`^[a-zA-Z0-9_\-]+$`).
-4. **Immutable Audit Trail**: `stockTransactions` and `auditLogs` are append-only (`allow update, delete: if false` for non-admin, and `stockTransactions` cannot be silently deleted even in UI; rules block `update` and `delete` on `stockTransactions` and `auditLogs`).
+4. **Audit Trail Integrity**: `stockTransactions` and `auditLogs` are immutable (`allow update: if false`); individual edits or non-admin deletions are blocked, and only verified admins (`isAdmin()`) can purge records during an authorized factory reset.
 5. **Relational Integrity**:
    - Creating a `SubProduct` requires `existsAfter(/databases/$(database)/documents/products/$(incoming().parentProductId))`.
    - Creating a `Task` requires `exists(/databases/$(database)/documents/employees/$(incoming().employeeId))` and `exists(/databases/$(database)/documents/products/$(incoming().productId))`.

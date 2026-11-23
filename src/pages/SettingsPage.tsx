@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Shield, Save } from 'lucide-react';
+import { Shield, Save, RotateCcw, AlertTriangle, X } from 'lucide-react';
 import { updatePassword } from 'firebase/auth';
 import { useErp } from '../context/ErpContext';
 import { auth } from '../lib/firebase';
 import {
   grantAdminAccess,
+  resetAllErpData,
   revokeAdminAccess,
   saveCompanySettings,
   toggleUserActive,
@@ -29,6 +30,13 @@ export function SettingsPage() {
   const [adminLoginId, setAdminLoginId] = useState(settings.adminLoginId || 'admin');
   const [newAdminPassword, setNewAdminPassword] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Factory Reset State
+  const [resetModalOpen, setResetModalOpen] = useState(false);
+  const [resetSettingsOpt, setResetSettingsOpt] = useState(true);
+  const [clearAuditLogsOpt, setClearAuditLogsOpt] = useState(true);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     setCompanyName(settings.companyName);
@@ -104,6 +112,32 @@ export function SettingsPage() {
       showToast('info', `User access ${nextActive ? 'enabled' : 'disabled'}.`);
     } catch (err) {
       showToast('error', err instanceof Error ? err.message : 'Failed to update user status.');
+    }
+  };
+
+  const handleFactoryReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (resetConfirmText.trim().toUpperCase() !== 'RESET') {
+      showToast('error', 'Type RESET in the confirmation box to proceed.');
+      return;
+    }
+    setResetting(true);
+    try {
+      const { deletedCount } = await resetAllErpData({
+        isAdmin,
+        resetSettings: resetSettingsOpt,
+        clearAuditLogs: clearAuditLogsOpt,
+      });
+      setResetModalOpen(false);
+      setResetConfirmText('');
+      showToast(
+        'success',
+        `System reset complete. ${deletedCount} saved records were cleared.`
+      );
+    } catch (err) {
+      showToast('error', err instanceof Error ? err.message : 'Failed to reset system data.');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -373,6 +407,129 @@ export function SettingsPage() {
           </div>
         )}
       </div>
+
+      {/* System Reset / Factory Reset */}
+      {isAdmin && (
+        <div className="rounded-lg border border-red-200 bg-white overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-red-100 bg-red-50/70 px-4 py-3">
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+            <h3 className="text-sm font-semibold text-red-900">
+              Reset All Data (Factory Reset)
+            </h3>
+          </div>
+          <div className="p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1 max-w-2xl">
+              <p className="text-sm font-medium text-slate-900">
+                Clear all ERP records and return the workspace to a fresh state
+              </p>
+              <p className="text-xs text-slate-600">
+                Permanently deletes all saved Products, Sub-Products, Employees, Issued Tasks,
+                Work Completions, Payments, and Stock Transactions. Optionally resets Audit Logs
+                and Company/Login settings back to defaults.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setResetConfirmText('');
+                setResetModalOpen(true);
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-red-300 bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 transition-colors whitespace-nowrap shrink-0"
+            >
+              <RotateCcw className="h-4 w-4" />
+              <span>Reset All Things</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Factory Reset Confirmation Modal */}
+      {resetModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-red-600" />
+                <h3 className="text-base font-semibold text-slate-900">
+                  Confirm Full System Reset
+                </h3>
+              </div>
+              <button
+                type="button"
+                disabled={resetting}
+                onClick={() => setResetModalOpen(false)}
+                className="rounded p-1 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleFactoryReset} className="mt-4 space-y-4">
+              <p className="text-xs leading-relaxed text-slate-600">
+                This action cannot be undone. All Products, Sub-Products, Employees, Tasks,
+                Production Entries, Payments, and Stock Movements in the database will be permanently deleted.
+              </p>
+
+              <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={clearAuditLogsOpt}
+                    onChange={(e) => setClearAuditLogsOpt(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
+                  />
+                  <span>Also clear Audit History logs</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={resetSettingsOpt}
+                    onChange={(e) => setResetSettingsOpt(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
+                  />
+                  <span>Reset Company Profile &amp; Portal Login ID back to defaults (admin / Admin@123)</span>
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Type <span className="font-mono font-bold text-red-600">RESET</span> to confirm *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                  placeholder="Type RESET"
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono focus:border-red-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
+                <button
+                  type="button"
+                  disabled={resetting}
+                  onClick={() => setResetModalOpen(false)}
+                  className="rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={resetting || resetConfirmText.trim().toUpperCase() !== 'RESET'}
+                  className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {resetting ? 'Resetting Database...' : 'Confirm Reset All'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
